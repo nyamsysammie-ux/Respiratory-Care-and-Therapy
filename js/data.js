@@ -3,14 +3,17 @@ const APP = {
   name: 'TSMHST Portal',
   school: 'Tricent School of Medical Health Science and Technology',
   short: 'TSMHST',
-  version: '1.0.0',
+  version: '1.1.0',
   build: '11 November 2026',
-  domain: 'www.tsmhst.co.ke',
+  domain: 'www.tsmhst.ac.ke',
+  websiteUrl: 'https://www.tsmhst.ac.ke',
   supportEmail: 'SammieNyamsy@gmail.com',
   supportPhone: '+254118000614',
   supportPhoneDisplay: '+254 118 000 614',
-  officeEmail: 'info@tshmst.ac.ke',
-  officePhone: '+254112970334',
+  officeEmail: 'info@tsmhst.ac.ke',
+  officePhone: '0112970334',
+  officePhoneDisplay: '0112 970 334',
+  officePhoneTel: '+254112970334',
   address: 'P.O. Box 3823-00200, Nairobi, Kenya'
 };
 
@@ -49,7 +52,7 @@ const CONTENT = {
     { title: '9. Intellectual property', text: 'Course materials, institutional branding, the portal design and its content remain the property of TSMHST or their respective owners. You may download your own academic records for personal use. Commercial copying or redistribution is not permitted.' },
     { title: '10. Availability and liability', text: 'The portal is provided on an “as available” basis. The institution aims for reliable service but does not guarantee uninterrupted access. To the extent permitted by law, TSMHST is not liable for loss arising from network failures, device problems or unauthorised access caused by poor password practice.' },
     { title: '11. Changes to these terms', text: 'These terms may be updated as the portal develops. Material changes will be announced in the portal. Continued use after an update means you accept the revised terms.' },
-    { title: '12. Contact', text: 'For portal support contact ' + APP.supportEmail + ' or WhatsApp ' + APP.supportPhoneDisplay + '. For admissions and official academic matters contact ' + APP.officeEmail + ' or ' + APP.officePhone + '.' }
+    { title: '12. Contact', text: 'For portal support contact ' + APP.supportEmail + ' or WhatsApp ' + APP.supportPhoneDisplay + '. For admissions and official academic matters contact ' + APP.officeEmail + ', call customer care on ' + APP.officePhone + ' or visit ' + APP.domain + '. Postal address: ' + APP.address + '.' }
   ]
 };
 
@@ -112,47 +115,55 @@ const EXAM_BODIES = [
   ['ACCA', 'Association of Chartered Certified Accountants']
 ];
 
+function programmeFee(tuition, examination) {
+  return { tuition, examination, library: 700, activity: 800 };
+}
+
 const PORTAL_PROGRAMMES = [
-  {
-    code: 'DCH6', name: 'Diploma in Community Health Level 6', short: 'Community Health',
-    dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'TVET CDACC', level: 'Diploma',
-    fee: { tuition: 18000, examination: 2500, library: 700, activity: 800 }
-  },
-  {
-    code: 'DND6', name: 'Diploma in Nutrition and Dietetics', short: 'Nutrition & Dietetics',
-    dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'KNEC', level: 'Diploma',
-    fee: { tuition: 20000, examination: 2500, library: 700, activity: 800 }
-  },
-  {
-    code: 'DMS6', name: 'Diploma in Mortuary Science', short: 'Mortuary Science',
-    dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'TVET CDACC', level: 'Diploma',
-    fee: { tuition: 19000, examination: 2500, library: 700, activity: 800 }
-  },
-  {
-    code: 'DPT6', name: 'Diploma in Perioperative Theatre Technology', short: 'Perioperative Theatre',
-    dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'TVET CDACC', level: 'Diploma',
-    fee: { tuition: 21000, examination: 2500, library: 700, activity: 800 }
-  },
-  {
-    code: 'DCP6', name: 'Diploma in Counseling Psychology', short: 'Counseling Psychology',
-    dept: 'Department of Social Sciences', duration: '6 terms', examBody: 'TVET CDACC', level: 'Diploma',
-    fee: { tuition: 17000, examination: 2000, library: 700, activity: 800 }
-  },
-  {
-    code: 'DICT6', name: 'Diploma in Information & Communication Technology', short: 'ICT',
-    dept: 'Department of Business & Information', duration: '6 terms', examBody: 'KNEC', level: 'Diploma',
-    fee: { tuition: 18000, examination: 2000, library: 700, activity: 800 }
-  },
-  {
-    code: 'DBM6', name: 'Diploma in Business Management', short: 'Business Management',
-    dept: 'Department of Business & Information', duration: '6 terms', examBody: 'KNEC / ABMA (UK)', level: 'Diploma',
-    fee: { tuition: 16000, examination: 2000, library: 700, activity: 800 }
-  },
-  {
-    code: 'DME9', name: 'Diploma in Medical Engineering', short: 'Medical Engineering',
-    dept: 'Department of Applied Science', duration: '9 terms', examBody: 'TVET CDACC / KNEC', level: 'Diploma',
-    fee: { tuition: 24000, examination: 3000, library: 1000, activity: 800 }
-  }
+  // Department of Health Sciences
+  { code: 'OPT6', name: 'Ophthalmic Technology', short: 'Ophthalmic Technology', dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'TVET CDACC', level: 'Diploma', fee: programmeFee(18000, 2500) },
+  { code: 'DOT9', name: 'Diploma in Orthopedic and Trauma Medicine', short: 'Orthopedic & Trauma Medicine', dept: 'Department of Health Sciences', duration: '9 terms', examBody: 'TVET CDACC', level: 'Diploma', fee: programmeFee(20000, 2500) },
+  { code: 'DPT6', name: 'Diploma in Perioperative Theater Technology Level 6', short: 'Perioperative Theater Technology', dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'TVET CDACC', level: 'Diploma', fee: programmeFee(21000, 2500) },
+  { code: 'DMS6', name: 'Diploma in Mortuary Science', short: 'Mortuary Science', dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'TVET CDACC', level: 'Diploma', fee: programmeFee(19000, 2500) },
+  { code: 'DND6', name: 'Diploma in Nutrition and Dietetics', short: 'Nutrition & Dietetics', dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'KNEC', level: 'Diploma', fee: programmeFee(20000, 2500) },
+  { code: 'DHR9', name: 'Diploma in Health Records & IT', short: 'Health Records & IT', dept: 'Department of Health Sciences', duration: '9 terms', examBody: 'TVET CDACC', level: 'Diploma', fee: programmeFee(19000, 2500) },
+  { code: 'DHM6', name: 'Diploma in Homecare Management', short: 'Homecare Management', dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'TVET CDACC', level: 'Diploma', fee: programmeFee(18000, 2500) },
+  { code: 'DCH6', name: 'Diploma in Community Health Level 6', short: 'Community Health', dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'TVET CDACC', level: 'Diploma', fee: programmeFee(18000, 2500) },
+  { code: 'DCA6', name: 'Diploma in Community Health Assistant Officer', short: 'Community Health Assistant', dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'TVET CDACC', level: 'Diploma', fee: programmeFee(18000, 2500) },
+  { code: 'DHA6', name: 'Diploma in Community Health & HIV/AIDS Management', short: 'Community Health & HIV/AIDS', dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'ABMA (UK)', level: 'Diploma', fee: programmeFee(18000, 2500) },
+  { code: 'DES6', name: 'Diploma in Environmental Sciences', short: 'Environmental Sciences', dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'KNEC', level: 'Diploma', fee: programmeFee(20000, 2500) },
+  { code: 'COT6', name: 'Certificate in Orthopedic and Trauma Medicine', short: 'Orthopedic & Trauma Medicine', dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'TVET CDACC', level: 'Certificate', fee: programmeFee(15000, 2000) },
+  { code: 'CPT5', name: 'Certificate in Perioperative Theater Technology Level 5', short: 'Perioperative Theater Technology', dept: 'Department of Health Sciences', duration: '3 terms', examBody: 'TVET CDACC', level: 'Certificate', fee: programmeFee(14000, 2000) },
+  { code: 'CND4', name: 'Certificate in Nutrition and Dietetics', short: 'Nutrition & Dietetics', dept: 'Department of Health Sciences', duration: '4 terms', examBody: 'KNEC', level: 'Certificate', fee: programmeFee(14000, 2000) },
+  { code: 'CMS3', name: 'Certificate in Mortuary Science', short: 'Mortuary Science', dept: 'Department of Health Sciences', duration: '3 terms', examBody: 'TVET CDACC', level: 'Certificate', fee: programmeFee(14000, 2000) },
+  { code: 'CHS3', name: 'Certificate in Health Services Supports', short: 'Health Services Supports', dept: 'Department of Health Sciences', duration: '3 terms', examBody: 'TVET CDACC', level: 'Certificate', fee: programmeFee(13000, 2000) },
+  { code: 'CGV4', name: 'Caregiver Level 4', short: 'Caregiver', dept: 'Department of Health Sciences', duration: '6 months', examBody: 'TVET CDACC', level: 'Certificate', fee: programmeFee(12000, 2000) },
+  { code: 'CHR6', name: 'Certificate in Health Records & IT', short: 'Health Records & IT', dept: 'Department of Health Sciences', duration: '6 terms', examBody: 'TVET CDACC', level: 'Certificate', fee: programmeFee(15000, 2000) },
+  { code: 'CCH5', name: 'Certificate in Community Health Level 5', short: 'Community Health Level 5', dept: 'Department of Health Sciences', duration: '3 terms', examBody: 'TVET CDACC', level: 'Certificate', fee: programmeFee(14000, 2000) },
+  { code: 'CCH4', name: 'Certificate in Community Health Level 4', short: 'Community Health Level 4', dept: 'Department of Health Sciences', duration: '3 terms', examBody: 'TVET CDACC', level: 'Certificate', fee: programmeFee(13000, 2000) },
+  { code: 'CHT3W', name: 'Certificate in HIV Counseling & Testing', short: 'HIV Counseling & Testing', dept: 'Department of Health Sciences', duration: '3 weeks', examBody: 'NASCOP', level: 'Certificate', fee: programmeFee(9000, 1500) },
+  { code: 'CHM3', name: 'Certificate in Homecare Management', short: 'Homecare Management', dept: 'Department of Health Sciences', duration: '3 terms', examBody: 'TVET CDACC', level: 'Certificate', fee: programmeFee(13000, 2000) },
+  // Department of Social Sciences
+  { code: 'DCD3', name: 'Diploma in Community Development & Social Work', short: 'Community Development & Social Work', dept: 'Department of Social Sciences', duration: '3 terms', examBody: 'KNEC', level: 'Diploma', fee: programmeFee(17000, 2000) },
+  { code: 'DCP6', name: 'Diploma in Counseling Psychology', short: 'Counseling Psychology', dept: 'Department of Social Sciences', duration: '6 terms', examBody: 'TVET CDACC', level: 'Diploma', fee: programmeFee(17000, 2000) },
+  { code: 'DHD6', name: 'Diploma in Community Health Development', short: 'Community Health Development', dept: 'Department of Social Sciences', duration: '6 terms', examBody: 'KNEC', level: 'Diploma', fee: programmeFee(17000, 2000) },
+  { code: 'CCD3', name: 'Certificate in Community Development & Social Work', short: 'Community Development & Social Work', dept: 'Department of Social Sciences', duration: '3 terms', examBody: 'KNEC', level: 'Certificate', fee: programmeFee(12000, 1500) },
+  { code: 'CHD3', name: 'Certificate in Community Health and Development', short: 'Community Health & Development', dept: 'Department of Social Sciences', duration: '3 terms', examBody: 'KNEC', level: 'Certificate', fee: programmeFee(12000, 1500) },
+  { code: 'CCP3', name: 'Certificate in Counseling Psychology', short: 'Counseling Psychology', dept: 'Department of Social Sciences', duration: '3 terms', examBody: 'TVET CDACC', level: 'Certificate', fee: programmeFee(12000, 1500) },
+  // Department of Applied Science
+  { code: 'DME9', name: 'Diploma in Medical Engineering', short: 'Medical Engineering', dept: 'Department of Applied Science', duration: '9 terms', examBody: 'TVET CDACC / KNEC', level: 'Diploma', fee: programmeFee(24000, 3000) },
+  { code: 'DAB6', name: 'Diploma in Applied Biology', short: 'Applied Biology', dept: 'Department of Applied Science', duration: '6 terms', examBody: 'KNEC', level: 'Diploma', fee: programmeFee(20000, 2500) },
+  { code: 'CBE6', name: 'Certificate in Biomedical Engineering', short: 'Biomedical Engineering', dept: 'Department of Applied Science', duration: '6 terms', examBody: 'TVET CDACC', level: 'Certificate', fee: programmeFee(16000, 2500) },
+  { code: 'CSL6', name: 'Certificate in Science Laboratory', short: 'Science Laboratory', dept: 'Department of Applied Science', duration: '6 terms', examBody: 'KNEC', level: 'Certificate', fee: programmeFee(15000, 2000) },
+  { code: 'BRG3', name: 'Bridging per subject', short: 'Bridging per subject', dept: 'Department of Applied Science', duration: '3 months', examBody: 'KNEC', level: 'Bridging', fee: programmeFee(8000, 1500) },
+  // Department of Business & Information
+  { code: 'DCM6', name: 'Diploma/Certificate in Disaster Management/Public Administration', short: 'Disaster Management/Public Administration', dept: 'Department of Business & Information', duration: '6 / 3 terms', examBody: 'KNEC', level: 'Diploma / Certificate', fee: programmeFee(17000, 2000) },
+  { code: 'DPM6', name: 'Diploma/Certificate in Project Management/Public Relations', short: 'Project Management/Public Relations', dept: 'Department of Business & Information', duration: '6 / 3 terms', examBody: 'KNEC', level: 'Diploma / Certificate', fee: programmeFee(17000, 2000) },
+  { code: 'DBM6', name: 'Diploma in Business Management/Human Resource Management', short: 'Business Management & HRM', dept: 'Department of Business & Information', duration: '6 / 3 terms', examBody: 'KNEC / ABMA (UK)', level: 'Diploma', fee: programmeFee(16000, 2000) },
+  { code: 'DICT6', name: 'Diploma/Certificate in Information & Communication Technology', short: 'Information & Communication Technology', dept: 'Department of Business & Information', duration: '6 / 3 terms', examBody: 'KNEC', level: 'Diploma / Certificate', fee: programmeFee(18000, 2000) },
+  { code: 'DPS6', name: 'Diploma/Certificate in Personnel Management/Purchasing & Supplies', short: 'Personnel Management/Purchasing & Supplies', dept: 'Department of Business & Information', duration: '6 / 3 terms', examBody: 'KNEC / ABMA', level: 'Diploma / Certificate', fee: programmeFee(16000, 2000) },
+  { code: 'DCE2', name: 'Diploma/Certificate in Computer Engineering, Information Systems', short: 'Computer Engineering & Information Systems', dept: 'Department of Business & Information', duration: '6 / 3 terms', examBody: 'KNEC / ABMA (UK)', level: 'Diploma / Certificate', fee: programmeFee(19000, 2000) },
+  { code: 'AGD3', name: 'Accounts / Graphic Design', short: 'Accounts / Graphic Design', dept: 'Department of Business & Information', duration: '2 / 3 terms', examBody: 'ACCA / KASNEB / KNEC', level: 'Diploma / Certificate', fee: programmeFee(14000, 2000) }
 ];
 
 const UNIT_DEFS = [
@@ -207,9 +218,7 @@ const UNIT_DEFS = [
 const UNITS = UNIT_DEFS.map(u => Object.assign({ current: true, termCode: '2026-T3', termLabel: 'September – December 2026' }, u));
 
 const HOSTELS = [
-  { id: 'H4', name: 'TSMHST Standard Hostel', room: '4-bed room', perTerm: 8000, description: 'Shared room with study desk, Wi-Fi and shared washrooms. Meals optional.' },
-  { id: 'H2', name: 'TSMHST Twin Hostel', room: '2-bed room', perTerm: 12000, description: 'Shared twin room with en-suite washroom, study desk and Wi-Fi.' },
-  { id: 'H1', name: 'TSMHST Executive Hostel', room: 'Single room', perTerm: 18000, description: 'Private room with en-suite washroom, study desk, Wi-Fi and meals.' }
+  { id: 'HST', name: 'TSMHST Hostel', room: 'Shared room', perTerm: 16000, description: 'Shared room with study desk, Wi-Fi and shared washrooms. Meals optional.' }
 ];
 
 const CAMPUSES = ['Nairobi', 'Juja', 'Thika', 'Homabay', 'Kisumu', 'Migori'];

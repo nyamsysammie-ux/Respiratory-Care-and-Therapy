@@ -191,7 +191,6 @@ function renderFinance(user) {
   return `${pageHead(I18N.t('Finance'), 'Fees, payments, paybills and hostel bookings',
     `<a class="btn btn-ghost btn-sm" href="#/users">${icon('users')} Student accounts</a>`)}
   <div class="stats-grid">
-    ${statCard('Collected fees', money(finance.collected), 'Verified payments', 'wallet', 'green')}
     ${statCard('Awaiting verification', money(finance.pending), finance.pendingCount + ' payments', 'clock', finance.pendingCount ? 'amber' : '')}
     ${statCard('Billed (all students)', money(billed), 'Current invoices', 'file', 'maroon')}
     ${statCard('Hostel requests', String(bookings.filter(b => b.status === 'pending').length), 'Pending review', 'bed', '')}
@@ -276,7 +275,7 @@ function renderAbout(user) {
     `<button type="button" class="btn btn-ghost btn-sm" data-action="show-terms">${icon('shield')} ${esc(I18N.t('Terms of use'))}</button>`)}
   <div class="about-hero">
     <div class="about-brand">${logo('about-hero-logo')}<div><span class="eyebrow">TSMHST · ${esc(APP.domain)}</span><h1>Tricent School of Medical Health Science &amp; Technology</h1><p>${esc(CONTENT.about)}</p></div></div>
-    <div class="about-hero-meta"><span>${icon('pin')} ${esc(APP.address)}</span><span>${icon('mail')} ${esc(APP.officeEmail)}</span><span>${icon('phone')} ${esc(APP.officePhone)}</span></div>
+    <div class="about-hero-meta"><span>${icon('pin')} ${esc(APP.address)}</span><span>${icon('mail')} ${esc(APP.officeEmail)}</span><span>${icon('phone')} ${esc(APP.officePhoneDisplay)}</span><span>${icon('arrow')} ${esc(APP.domain)}</span></div>
   </div>
   <div class="about-triple wide">
     <div class="about-pillar"><span>${icon('arrow')}</span><h3>Purpose</h3><p>${esc(CONTENT.purpose)}</p></div>
@@ -334,14 +333,15 @@ function renderAbout(user) {
       <div class="admission-block"><strong>Intakes</strong><span>${esc(CONTENT.intakes)}</span></div>
       <div class="admission-block"><strong>Modes of study</strong><span>${CONTENT.modes.map(m => esc(m)).join(' · ')}</span></div>
       <div class="admission-block"><strong>Requirements</strong><ul class="plain-list">${CONTENT.requirements.map(r => `<li>${esc(r)}</li>`).join('')}</ul></div>
-      <div class="contact-lines"><a href="tel:+254112970334">${icon('phone')} ${esc(APP.officePhone)}</a><a href="mailto:${esc(APP.officeEmail)}">${icon('mail')} ${esc(APP.officeEmail)}</a><a href="https://www.tsmhst.co.ke" target="_blank" rel="noopener">${icon('arrow')} www.tsmhst.co.ke</a></div>
+      <div class="contact-lines"><a href="tel:${APP.officePhoneTel}">${icon('phone')} ${esc(APP.officePhoneDisplay)}</a><a href="mailto:${esc(APP.officeEmail)}">${icon('mail')} ${esc(APP.officeEmail)}</a><a href="${APP.websiteUrl}" target="_blank" rel="noopener">${icon('arrow')} ${esc(APP.domain)}</a></div>
     </div>
   </div>
   <div class="card contact-card">
     <div class="card-head"><div><h2>Contact the school</h2><p class="card-sub">Admissions, official records and general enquiries</p></div></div>
     <div class="contact-grid">
-      <div><span>${icon('phone')}</span><strong>Customer care</strong><a href="tel:+254112970334">+254 112 970 334</a><small>All campuses</small></div>
+      <div><span>${icon('phone')}</span><strong>Customer care</strong><a href="tel:${APP.officePhoneTel}">${esc(APP.officePhoneDisplay)}</a><small>All campuses</small></div>
       <div><span>${icon('mail')}</span><strong>Email</strong><a href="mailto:${esc(APP.officeEmail)}">${esc(APP.officeEmail)}</a><small>Admissions & general enquiries</small></div>
+      <div><span>${icon('arrow')}</span><strong>Website</strong><a href="${APP.websiteUrl}" target="_blank" rel="noopener">${esc(APP.domain)}</a><small>Official college website</small></div>
       <div><span>${icon('pin')}</span><strong>Postal address</strong><span>${esc(APP.address)}</span><small>Official correspondence</small></div>
       <div><span>${icon('chat')}</span><strong>Portal support</strong><a href="mailto:${esc(APP.supportEmail)}">${esc(APP.supportEmail)}</a><a href="https://wa.me/254118000614" target="_blank" rel="noopener">${esc(APP.supportPhoneDisplay)}</a></div>
     </div>
@@ -442,7 +442,7 @@ function renderSettings(user) {
         <a class="help-card" href="tel:+254118000614">${icon('phone')}<span><strong>${esc(I18N.t('Call support'))}</strong><small>${esc(APP.supportPhoneDisplay)}</small></span>${icon('chevron')}</a>
         <a class="help-card" href="mailto:${esc(APP.officeEmail)}">${icon('graduation')}<span><strong>Admissions office</strong><small>${esc(APP.officeEmail)}</small></span>${icon('chevron')}</a>
       </div>
-      <p class="setting-note">Portal support: ${esc(APP.supportEmail)} · WhatsApp ${esc(APP.supportPhoneDisplay)}. For official academic records contact the Registrar.</p>
+      <p class="setting-note">College customer care: ${esc(APP.officePhoneDisplay)} · ${esc(APP.officeEmail)} · ${esc(APP.domain)} · ${esc(APP.address)}. Portal support: ${esc(APP.supportEmail)} · WhatsApp ${esc(APP.supportPhoneDisplay)}. For official academic records contact the Registrar.</p>
     </section>
 
     <section class="card settings-card span-two">

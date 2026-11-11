@@ -90,6 +90,13 @@ const DB = {
       meta.paybillsVersion = 2;
       this.save();
     }
+    if (!meta.hostelsVersion) {
+      (this.data.hostelBookings || []).forEach(b => {
+        if (!HOSTELS.some(h => h.id === b.hostelId)) b.hostelId = HOSTELS[0].id;
+      });
+      meta.hostelsVersion = 1;
+      this.save();
+    }
   },
 
   save() {
@@ -317,7 +324,7 @@ const DB = {
       users, units: deepCopy(UNITS), registrations, marks, invoices, payments,
       sessions, attendance, assignments, submissions, notices, presence,
       hostelBookings: [
-        { id: uid('hb'), studentId: 'u_stu2', hostelId: 'H2', termCode: '2026-T3', status: 'pending', createdAt: isoAt(-2 * DAY) }
+        { id: uid('hb'), studentId: 'u_stu2', hostelId: 'HST', termCode: '2026-T3', status: 'pending', createdAt: isoAt(-2 * DAY) }
       ],
       feedback: []
     };
@@ -879,9 +886,7 @@ const DB = {
   pendingUsers() { return this.data.users.filter(u => u.status === 'pending'); },
   recentPendingPayments() { return this.data.payments.filter(p => p.status === 'pending').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); },
   financeSummary() {
-    const verified = this.data.payments.filter(p => p.status === 'verified');
     return {
-      collected: verified.reduce((a, b) => a + b.amount, 0),
       pending: this.data.payments.filter(p => p.status === 'pending').reduce((a, b) => a + b.amount, 0),
       pendingCount: this.data.payments.filter(p => p.status === 'pending').length
     };

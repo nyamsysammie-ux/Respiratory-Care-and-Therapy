@@ -1131,7 +1131,7 @@ async function installApp() {
   }
   modal(I18N.t('Install app'), `<div class="install-help">
     <p class="modal-lead">Add TSMHST Portal to your Android home screen — it opens like a normal app and keeps working when the connection is poor.</p>
-    <div class="install-step"><span>1</span><div><strong>Open the portal in Chrome</strong><p>The portal must be served over HTTPS (for example www.tsmhst.co.ke/portal).</p></div></div>
+    <div class="install-step"><span>1</span><div><strong>Open the portal in Chrome</strong><p>The portal must be served over HTTPS (for example ${esc(APP.domain)}/portal).</p></div></div>
     <div class="install-step"><span>2</span><div><strong>Tap the Chrome menu (⋮)</strong><p>Choose “Install app” or “Add to Home screen”.</p></div></div>
     <div class="install-step"><span>3</span><div><strong>Confirm installation</strong><p>An app icon appears on your home screen. Open it to use the portal full-screen.</p></div></div>
     <div class="install-step"><span>4</span><div><strong>On iPhone or iPad</strong><p>Open in Safari, tap Share, then “Add to Home Screen”.</p></div></div>

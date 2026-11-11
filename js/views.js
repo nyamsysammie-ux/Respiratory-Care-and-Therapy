@@ -212,7 +212,7 @@ function portalShell(user, route, content) {
 function authPage() {
   return `<div class="auth-shell">
     <section class="auth-hero">
-      <div class="auth-brand">${logo('auth-logo')}<div><strong>Tricent School of<br>Medical Health Science &amp; Technology</strong><span>TSMHST · www.tsmhst.co.ke</span></div></div>
+      <div class="auth-brand">${logo('auth-logo')}<div><strong>Tricent School of<br>Medical Health Science &amp; Technology</strong><span>TSMHST · ${esc(APP.domain)}</span></div></div>
       <div class="auth-hero-copy">
         <span class="eyebrow light">Student & staff portal</span>
         <h1>Your campus,<br><em>in your pocket.</em></h1>
@@ -227,6 +227,7 @@ function authPage() {
       <div class="auth-hero-foot">
         <div><strong>Need help?</strong><br><a href="mailto:${APP.supportEmail}">${APP.supportEmail}</a></div>
         <div><strong>WhatsApp</strong><br><a href="https://wa.me/254118000614" target="_blank" rel="noopener">${APP.supportPhoneDisplay}</a></div>
+        <div><strong>College</strong><br><a href="mailto:${APP.officeEmail}">${APP.officeEmail}</a> · <a href="tel:${APP.officePhoneTel}">${APP.officePhoneDisplay}</a> · <a href="${APP.websiteUrl}" target="_blank" rel="noopener">${APP.domain}</a></div>
       </div>
     </section>
 
@@ -270,7 +271,10 @@ function authPage() {
           <div class="reg-student-fields">
             <div class="form-grid two">
               <label class="field"><span>${esc(I18N.t('Admission number'))}</span><input name="admissionNo" placeholder="TSMHST/CH/2026/013"></label>
-              <label class="field"><span>${esc(I18N.t('Programme'))}</span><select name="programme">${PORTAL_PROGRAMMES.map(p => `<option value="${p.code}">${esc(p.name)}</option>`).join('')}</select></label>
+              <label class="field"><span>${esc(I18N.t('Programme'))}</span><select name="programme">${DEPARTMENTS.map(d => {
+                const list = PORTAL_PROGRAMMES.filter(p => p.dept === d);
+                return list.length ? `<optgroup label="${esc(d)}">${list.map(p => `<option value="${p.code}">${esc(p.name)}</option>`).join('')}</optgroup>` : '';
+              }).join('')}</select></label>
               <label class="field"><span>${esc(I18N.t('Year of study'))}</span><select name="year"><option value="1">Year 1</option><option value="2">Year 2</option><option value="3">Year 3</option></select></label>
               <label class="field"><span>${esc(I18N.t('Campus'))}</span><select name="campus">${CAMPUSES.map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
             </div>
@@ -511,12 +515,11 @@ function renderAdminHome(user) {
       <p>${DB.data.meta.registrationOpen ? 'Unit registration is open' : 'Unit registration is closed'} · ${students.length} active students · ${DB.data.units.filter(u => u.current).length} units</p>
       <div class="hero-actions"><a class="btn btn-light btn-sm" href="#/academics">${icon('academics')} Manage academics</a><a class="btn btn-outline-light btn-sm" href="#/finance">${icon('finance')} Finance desk</a></div>
     </div>
-    <div class="hero-metric"><span>Fees collected</span><strong class="smaller">${money(finance.collected)}</strong><small>${money(finance.pending)} pending verification</small></div>
+    <div class="hero-metric"><span>Payments to verify</span><strong class="smaller">${finance.pendingCount}</strong><small>${money(finance.pending)} awaiting verification</small></div>
   </div>
   <div class="stats-grid">
     ${statCard(I18N.t('Pending registrations'), String(pending.length), pending.length ? 'Awaiting your review' : 'Nothing pending', 'approvals', pending.length ? 'amber' : '')}
     ${statCard(I18N.t('Active students'), String(students.length), 'Approved portal accounts', 'graduation', 'green')}
-    ${statCard(I18N.t('Collected fees'), money(finance.collected), 'Verified payments', 'wallet', 'maroon')}
     ${statCard(I18N.t('Payments to verify'), String(finance.pendingCount), money(finance.pending) + ' pending', 'finance', finance.pendingCount ? 'amber' : '')}
   </div>
   <div class="dash-grid">
@@ -755,7 +758,7 @@ function renderTranscript(user) {
   <div class="transcript-sheet" id="transcript-sheet">
     <div class="transcript-head">
       <img src="assets/logo.jpeg" alt="TSMHST logo">
-      <div class="transcript-school"><strong>Tricent School of Medical Health Science and Technology</strong><span>P.O. Box 3823-00200, Nairobi, Kenya · www.tsmhst.co.ke · ${APP.officeEmail}</span><h2>ACADEMIC TRANSCRIPT</h2></div>
+      <div class="transcript-school"><strong>Tricent School of Medical Health Science and Technology</strong><span>${esc(APP.address)} · ${esc(APP.domain)} · ${esc(APP.officeEmail)}</span><h2>ACADEMIC TRANSCRIPT</h2></div>
       <div class="transcript-stamp">UNOFFICIAL<br>PORTAL COPY</div>
     </div>
     <div class="transcript-student">
