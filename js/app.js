@@ -1,13 +1,31 @@
 /* TSMHST Portal — routing, interactions, settings, permissions and PWA */
 const ACCESS = {
   student: ['home', 'units', 'assignments', 'results', 'transcript', 'attendance', 'fees', 'hostel', 'team', 'about', 'settings', 'notifications'],
-  lecturer: ['home', 'units', 'assignments', 'marks', 'attendance', 'team', 'about', 'settings', 'notifications'],
-  admin: ['home', 'approvals', 'users', 'academics', 'marks', 'attendance', 'finance', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  lecturer: ['home', 'units', 'assignments', 'marks', 'attendance', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  owner: ['settings'],
+  director: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  deputy_director: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  general_admin: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  principal: ['home', 'approvals', 'users', 'payments', 'academics', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  campus_admin: ['home', 'approvals', 'users', 'payments', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  registrar: ['home', 'academics', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  exam_officer: ['home', 'marks', 'academics', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  qa_officer: ['home', 'quality', 'campuses', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  accounts_clerk: ['home', 'finance', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  secretary: ['home', 'announcements', 'team', 'about', 'settings', 'notifications'],
   council: ['home', 'announcements', 'team', 'about', 'settings', 'notifications']
 };
 
 let deferredInstallPrompt = null;
 let lastUnread = 0;
+
+function canApproveAccounts(user) {
+  return !!user && (user.role === 'owner' || isAdminRole(user.role)) && user.role !== 'secretary';
+}
+
+function canVerifyPayments(user) {
+  return !!user && user.role === 'campus_admin';
+}
 
 const app = document.getElementById('app');
 const modalRoot = document.getElementById('modal-root');
@@ -34,7 +52,8 @@ async function boot() {
 
 function currentRoute(user) {
   let route = location.hash.replace(/^#\/?/, '').split('?')[0] || 'home';
-  if (!ACCESS[user.role] || !ACCESS[user.role].includes(route)) route = 'home';
+  const allowed = ACCESS[user.role];
+  if (!allowed || !allowed.includes(route)) route = (allowed && allowed[0]) || 'home';
   return route;
 }
 
@@ -119,6 +138,7 @@ function bindGlobalEvents() {
         const form = t.closest('form');
         form.querySelector('.reg-student-fields').hidden = t.value !== 'student';
         form.querySelector('.reg-lecturer-fields').hidden = t.value !== 'lecturer';
+        form.querySelector('.reg-admin-fields').hidden = t.value !== 'admin';
         form.querySelectorAll('.radio-card').forEach(card => card.classList.toggle('active', card.contains(t)));
         return;
       }
@@ -290,7 +310,7 @@ async function handleAction(action, el, event) {
       await publishCurrentUnit();
       return;
     case 'session-close': {
-      if (!user || (user.role !== 'lecturer' && user.role !== 'admin')) return;
+      if (!user || (user.role !== 'lecturer' && user.role !== 'exam_officer')) return;
       const ok = await confirmDialog({ title: 'End session', message: 'Close this attendance session? Students will no longer be able to sign in.', confirmText: 'End session', danger: true });
       if (!ok) return;
       DB.closeSession(el.dataset.session);
@@ -362,16 +382,17 @@ async function handleAction(action, el, event) {
       render();
       return;
     case 'approval-approve': {
-      if (!user || user.role !== 'admin') return;
+      if (!user || !canApproveAccounts(user)) return;
       const target = DB.user(el.dataset.user);
       if (!target) return;
-      DB.approveUser(target.id, user.id);
+      const result = DB.approveUser(target.id, user.id);
+      if (result && result.error === 'forbidden') { toast('You are not the approving office for this account.', 'error'); return; }
       toast(target.name + ' approved. They can now sign in.', 'success');
       render();
       return;
     }
     case 'approval-reject': {
-      if (!user || user.role !== 'admin') return;
+      if (!user || !canApproveAccounts(user)) return;
       const target = DB.user(el.dataset.user);
       if (!target) return;
       const ok = await confirmDialog({ title: 'Reject registration', message: `Reject ${target.name}? They will not be able to sign in.`, confirmText: 'Reject', danger: true });
@@ -382,9 +403,9 @@ async function handleAction(action, el, event) {
       return;
     }
     case 'user-toggle': {
-      if (!user || user.role !== 'admin') return;
+      if (!user || !canManageUser(user, DB.user(el.dataset.user))) return;
       const target = DB.user(el.dataset.user);
-      if (!target || target.role === 'admin') return;
+      if (!target) return;
       const status = el.dataset.status;
       const ok = await confirmDialog({ title: status === 'suspended' ? 'Suspend account' : 'Activate account', message: `${status === 'suspended' ? 'Suspend' : 'Activate'} ${target.name}?`, confirmText: status === 'suspended' ? 'Suspend' : 'Activate', danger: status === 'suspended' });
       if (!ok) return;
@@ -405,10 +426,11 @@ async function handleAction(action, el, event) {
       return;
     }
     case 'payment-verify': {
-      if (!user || user.role !== 'admin') return;
+      if (!user || !canVerifyPayments(user)) return;
       const payment = DB.data.payments.find(p => p.id === el.dataset.payment);
       if (!payment) return;
       const student = DB.user(payment.studentId);
+      if (student && !DB.inScope(user, student)) { toast('That student belongs to another campus.', 'error'); return; }
       const ok = await confirmDialog({ title: 'Verify payment', message: `Accept ${money(payment.amount)} from ${student ? student.name : 'student'} with reference ${payment.reference}?`, confirmText: 'Verify payment' });
       if (!ok) return;
       DB.verifyPayment(payment.id, user.id);
@@ -417,7 +439,7 @@ async function handleAction(action, el, event) {
       return;
     }
     case 'payment-reject': {
-      if (!user || user.role !== 'admin') return;
+      if (!user || !canVerifyPayments(user)) return;
       const payment = DB.data.payments.find(p => p.id === el.dataset.payment);
       if (!payment) return;
       const ok = await confirmDialog({ title: 'Reject payment', message: `Reject reference ${payment.reference}? The student will be asked to check the code.`, confirmText: 'Reject payment', danger: true });
@@ -428,17 +450,22 @@ async function handleAction(action, el, event) {
       return;
     }
     case 'booking-status': {
-      if (!user || user.role !== 'admin') return;
+      if (!user || !canVerifyPayments(user)) return;
       DB.setBookingStatus(el.dataset.booking, el.dataset.status, user.id);
       toast('Hostel request ' + el.dataset.status + '. Student notified.', 'success');
       render();
       return;
     }
+    case 'marks-unit-open':
+      PORTAL_STATE.marks.unitCode = el.dataset.unit;
+      PORTAL_STATE.marks.order = null;
+      location.hash = '#/marks';
+      return;
     case 'new-announcement':
       openAnnouncementModal();
       return;
     case 'announcement-delete': {
-      if (!user || user.role !== 'admin') return;
+      if (!user || !isAdminRole(user.role) || user.role === 'owner') return;
       const ok = await confirmDialog({ title: 'Delete announcement', message: 'This announcement will be removed from the portal for everyone.', confirmText: 'Delete', danger: true });
       if (!ok) return;
       DB.deleteNotice(el.dataset.notice);
@@ -473,19 +500,26 @@ function showAuthAlert(type, message) {
 function switchAuthTab(tab) {
   const signin = document.getElementById('signin-form');
   const register = document.getElementById('register-form');
+  const executive = document.getElementById('executive-form');
   if (!signin || !register) return;
   document.querySelectorAll('.auth-tabs .segment').forEach(btn => {
     const active = btn.dataset.tab === tab;
     btn.classList.toggle('active', active);
     btn.setAttribute('aria-selected', active ? 'true' : 'false');
   });
-  const isSignin = tab === 'signin';
-  signin.hidden = !isSignin;
-  register.hidden = isSignin;
+  signin.hidden = tab !== 'signin';
+  register.hidden = tab !== 'register';
+  if (executive) executive.hidden = tab !== 'executive';
   const title = document.getElementById('auth-title');
   const sub = document.getElementById('auth-sub');
-  if (title) title.textContent = I18N.t(isSignin ? 'Welcome back' : 'Create an account');
-  if (sub) sub.textContent = I18N.t(isSignin ? 'Sign in to continue' : 'Register as a student or lecturer. Accounts are approved by the administrator.');
+  const copy = {
+    signin: ['Welcome back', 'Sign in to continue'],
+    register: ['Create an account', 'Register as a student, lecturer or college admin. Accounts are approved by the responsible office.'],
+    executive: ['Directorate registration', 'Director, deputy director and general admin oversee activities in all campuses.']
+  };
+  const pair = copy[tab] || copy.signin;
+  if (title) title.textContent = I18N.t(pair[0]);
+  if (sub) sub.textContent = I18N.t(pair[1]);
   const box = document.getElementById('auth-alert');
   if (box) box.hidden = true;
 }
@@ -518,14 +552,17 @@ async function handleSignin(form) {
 
 async function handleRegister(form) {
   const fd = new FormData(form);
+  const isExecutive = form.id === 'executive-form';
   const password = String(fd.get('password') || '');
   const confirm = String(fd.get('confirmPassword') || '');
-  const role = String(fd.get('role') || 'student');
+  const role = isExecutive ? 'executive' : String(fd.get('role') || 'student');
   if (password.length < 6) { showAuthAlert('error', 'Use a password with at least 6 characters.'); return; }
   if (password !== confirm) { showAuthAlert('error', 'The passwords do not match.'); return; }
   if (!fd.get('terms')) { showAuthAlert('error', 'You must agree to the Terms of Use to register.'); return; }
+  const staff = !isExecutive && (role === 'student');
   const payload = {
     role,
+    adminRole: isExecutive ? String(fd.get('adminRole') || '') : (role === 'admin' ? String(fd.get('adminRole') || '') : ''),
     name: String(fd.get('name') || '').trim(),
     email: String(fd.get('email') || '').trim(),
     phone: String(fd.get('phone') || '').trim(),
@@ -533,12 +570,17 @@ async function handleRegister(form) {
     admissionNo: String(fd.get('admissionNo') || '').trim(),
     programme: String(fd.get('programme') || 'DCH6'),
     year: String(fd.get('year') || '1'),
-    campus: String(fd.get('campus') || 'Nairobi'),
+    campus: staff ? String(fd.get('campus') || 'Nairobi') : String(fd.get('staffCampus') || 'Nairobi'),
     staffNo: String(fd.get('staffNo') || '').trim(),
     department: String(fd.get('department') || DEPARTMENTS[0])
   };
-  if (!payload.name || !payload.email || (role === 'student' && !payload.admissionNo) || (role === 'lecturer' && !payload.staffNo)) {
+  const needsStaffNo = isExecutive || role === 'lecturer' || role === 'admin';
+  if (!payload.name || !payload.email || (role === 'student' && !payload.admissionNo) || (needsStaffNo && !payload.staffNo)) {
     showAuthAlert('error', 'Please complete all required fields for your role.');
+    return;
+  }
+  if ((role === 'admin' || isExecutive) && !payload.adminRole) {
+    showAuthAlert('error', 'Select the administrative role you are registering for.');
     return;
   }
   const btn = form.querySelector('button[type="submit"]');
@@ -551,21 +593,28 @@ async function handleRegister(form) {
       email: 'An account already uses that email address.',
       admission: 'That admission number is already registered.',
       staff: 'That staff number is already registered.',
+      role: 'Select a valid role for this registration.',
       missing: 'Please complete the required fields.'
     };
     showAuthAlert('error', messages[result.error] || 'Registration could not be completed.');
     return;
   }
   form.reset();
-  document.querySelectorAll('.radio-card').forEach((c, i) => c.classList.toggle('active', i === 0));
-  const studentFields = form.querySelector('.reg-student-fields');
-  const lecturerFields = form.querySelector('.reg-lecturer-fields');
-  if (studentFields) studentFields.hidden = false;
-  if (lecturerFields) lecturerFields.hidden = true;
+  if (!isExecutive) {
+    document.querySelectorAll('.radio-card').forEach((c, i) => c.classList.toggle('active', i === 0));
+    const studentFields = form.querySelector('.reg-student-fields');
+    const lecturerFields = form.querySelector('.reg-lecturer-fields');
+    const adminFields = form.querySelector('.reg-admin-fields');
+    if (studentFields) studentFields.hidden = false;
+    if (lecturerFields) lecturerFields.hidden = true;
+    if (adminFields) adminFields.hidden = true;
+  }
   switchAuthTab('signin');
   const idField = document.getElementById('signin-identifier');
   if (idField) idField.value = payload.email;
-  showAuthAlert('success', 'Registration submitted. Your account is awaiting administrator approval — sign in once approved.');
+  const approver = DB.approverRoleFor(isExecutive || role === 'admin' ? payload.adminRole : role);
+  const approverText = approver ? ROLE_LABELS[approver] : 'the responsible office';
+  showAuthAlert('success', `Registration submitted. Your account is awaiting approval by ${approverText} — sign in once approved.`);
   toast('Registration submitted for approval.', 'success');
 }
 
@@ -627,7 +676,7 @@ function openAssignment(id) {
 
 function openNewAssignment() {
   const user = DB.currentUser();
-  if (!user || (user.role !== 'lecturer' && user.role !== 'admin')) return;
+  if (!user || !canManageMarks(user)) return;
   const units = staffUnits(user);
   if (!units.length) { toast('No units available for assignments.', 'error'); return; }
   const d = new Date(Date.now() + 7 * DAY);
@@ -658,7 +707,7 @@ function recalcMarkRow(input) {
   const cat2 = Number(row.querySelector('[data-mark-field="cat2"]').value) || 0;
   const exam = Number(row.querySelector('[data-mark-field="exam"]').value) || 0;
   const filled = ['cat1', 'cat2', 'exam'].every(f => row.querySelector(`[data-mark-field="${f}"]`).value !== '');
-  const total = cat1 + cat2 + exam;
+  const total = Math.round((cat1 + cat2) / 2 + exam);
   const totalEl = row.querySelector('[data-row-total]');
   const gradeEl = row.querySelector('[data-row-grade]');
   if (totalEl) totalEl.textContent = filled ? total : '—';
@@ -671,7 +720,7 @@ function recalcMarkRow(input) {
 
 async function randomizeCurrentUnit() {
   const user = DB.currentUser();
-  if (!user || (user.role !== 'lecturer' && user.role !== 'admin')) return;
+  if (!user || !canManageMarks(user)) return;
   const unit = currentMarksUnit(user);
   if (!unit) return;
   const ok = await confirmDialog({ title: 'Randomize marks', message: `Generate new randomized scores for every student registered in ${unit.code}? Existing marks for this unit will be overwritten.`, confirmText: 'Generate marks' });
@@ -684,14 +733,14 @@ async function randomizeCurrentUnit() {
 
 async function randomizeAllUnits() {
   const user = DB.currentUser();
-  if (!user || (user.role !== 'lecturer' && user.role !== 'admin')) return;
+  if (!user || !canManageMarks(user)) return;
   const unit = currentMarksUnit(user);
   if (!unit) return;
-  const scope = user.role === 'admin' ? 'all units in ' + programmeFor(unit.programme).name : 'all of your units';
+  const scope = user.role === 'exam_officer' ? 'all units in ' + programmeFor(unit.programme).name : 'all of your units';
   const ok = await confirmDialog({ title: 'Randomize all units', message: `Generate new randomized marks for ${scope}? Existing marks in those units will be overwritten.`, confirmText: 'Generate marks' });
   if (!ok) return;
   let count = 0;
-  if (user.role === 'admin') count = DB.randomizeProgramme(unit.programme, DB.data.meta.termCode);
+  if (user.role === 'exam_officer') count = DB.randomizeProgramme(unit.programme, DB.data.meta.termCode);
   else DB.unitsForLecturer(user.id).forEach(u => { count += DB.randomizeMarks(u.code, DB.data.meta.termCode); });
   toast('Randomized marks generated for ' + count + ' student records.', 'success');
   render();
@@ -699,7 +748,7 @@ async function randomizeAllUnits() {
 
 function saveMarksFromTable() {
   const user = DB.currentUser();
-  if (!user || (user.role !== 'lecturer' && user.role !== 'admin')) return;
+  if (!user || !canManageMarks(user)) return;
   const unit = currentMarksUnit(user);
   if (!unit) return;
   const rows = Array.from(document.querySelectorAll('[data-student-row]'));
@@ -722,7 +771,7 @@ function saveMarksFromTable() {
 
 async function publishCurrentUnit() {
   const user = DB.currentUser();
-  if (!user || (user.role !== 'lecturer' && user.role !== 'admin')) return;
+  if (!user || !canManageMarks(user)) return;
   const unit = currentMarksUnit(user);
   if (!unit) return;
   const marks = DB.marksForUnit(unit.code, DB.data.meta.termCode);
@@ -898,11 +947,14 @@ async function changePermission(key, enabled) {
 
 function openAnnouncementModal() {
   const user = DB.currentUser();
-  if (!user || (user.role !== 'admin' && user.role !== 'council')) return;
+  if (!user || (!isStaffRole(user.role) && user.role !== 'council')) return;
+  const canTargetCampus = isAdminRole(user.role) || isExecRole(user.role);
+  const lockedCampus = user.role === 'lecturer' ? user.campus : '';
   modal(I18N.t('Create announcement'), `<form data-form="new-announcement" class="form-grid">
     <label class="field form-span"><span>Title</span><input name="title" required maxlength="120" placeholder="e.g. Unit registration closes Friday"></label>
     <label class="field form-span"><span>Message</span><textarea name="message" rows="6" required maxlength="1200" placeholder="Write the announcement for the portal community."></textarea></label>
-    <label class="field"><span>${esc(I18N.t('Audience'))}</span><select name="audience"><option value="all">Everyone</option><option value="students">Students</option><option value="staff">Staff</option></select></label>
+    <label class="field"><span>${esc(I18N.t('Audience'))}</span><select name="audience"><option value="all">Everyone</option><option value="students">Students</option><option value="staff">Staff</option><option value="admins">Administrators</option></select></label>
+    <label class="field"><span>Campus</span><select name="campus" ${canTargetCampus ? '' : 'disabled'}><option value="">All campuses</option>${CAMPUSES.map(c => `<option value="${esc(c)}" ${(canTargetCampus ? user.campus : lockedCampus) === c ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select>${canTargetCampus ? '' : `<input type="hidden" name="campus" value="${esc(lockedCampus)}">`}</label>
     <label class="checkline self-end"><input type="checkbox" name="pinned"> <span>${esc(I18N.t('Pinned'))}</span></label>
     <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('megaphone')} ${esc(I18N.t('Create announcement'))}</button></div>
   </form>`);
@@ -931,7 +983,7 @@ async function handleSubmit(form) {
   }
 
   if (kind === 'grade-submission') {
-    if (user.role !== 'lecturer' && user.role !== 'admin') return;
+    if (!user || user.role !== 'lecturer') return;
     const sub = DB.data.submissions.find(s => s.id === form.dataset.id);
     if (!sub) return;
     const assignment = DB.data.assignments.find(a => a.id === sub.assignmentId);
@@ -945,7 +997,7 @@ async function handleSubmit(form) {
   }
 
   if (kind === 'new-assignment') {
-    if (user.role !== 'lecturer' && user.role !== 'admin') return;
+    if (!user || user.role !== 'lecturer') return;
     const unitCode = String(fd.get('unitCode') || '');
     if (!staffUnits(user).some(u => u.code === unitCode)) { toast('You cannot create an assignment for that unit.', 'error'); return; }
     const title = String(fd.get('title') || '').trim();
@@ -997,7 +1049,7 @@ async function handleSubmit(form) {
   }
 
   if (kind === 'save-academic') {
-    if (user.role !== 'admin') return;
+    if (!user || user.role !== 'registrar') return;
     const termLabel = String(fd.get('termLabel') || '').trim();
     const termCode = String(fd.get('termCode') || '').trim();
     if (!termLabel || !termCode) { toast('Term label and code are required.', 'error'); return; }
@@ -1013,7 +1065,7 @@ async function handleSubmit(form) {
   }
 
   if (kind === 'save-paybills') {
-    if (user.role !== 'admin') return;
+    if (!user || user.role !== 'accounts_clerk') return;
     const feesPaybill = String(fd.get('feesPaybill') || '').trim();
     const hostelPaybill = String(fd.get('hostelPaybill') || '').trim();
     if (!/^\d{4,8}$/.test(feesPaybill) || !/^\d{4,8}$/.test(hostelPaybill)) {
@@ -1030,11 +1082,11 @@ async function handleSubmit(form) {
   }
 
   if (kind === 'new-announcement') {
-    if (user.role !== 'admin' && user.role !== 'council') return;
+    if (!user || (!isStaffRole(user.role) && user.role !== 'council')) return;
     const title = String(fd.get('title') || '').trim();
     const message = String(fd.get('message') || '').trim();
     if (!title || !message) { toast('Enter an announcement title and message.', 'error'); return; }
-    DB.createAnnouncement({ title, message, audience: String(fd.get('audience') || 'all'), pinned: !!fd.get('pinned') }, user.id);
+    DB.createAnnouncement({ title, message, audience: String(fd.get('audience') || 'all'), campus: String(fd.get('campus') || ''), pinned: !!fd.get('pinned') }, user.id);
     toast('Announcement published.', 'success');
     closeModal();
     render();

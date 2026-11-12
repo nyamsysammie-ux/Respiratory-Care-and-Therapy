@@ -3,8 +3,8 @@ const APP = {
   name: 'TSMHST Portal',
   school: 'Tricent School of Medical Health Science and Technology',
   short: 'TSMHST',
-  version: '1.1.0',
-  build: '11 November 2026',
+  version: '1.3.0',
+  build: '12 November 2026',
   domain: 'www.tsmhst.ac.ke',
   websiteUrl: 'https://www.tsmhst.ac.ke',
   supportEmail: 'SammieNyamsy@gmail.com',
@@ -222,6 +222,70 @@ const HOSTELS = [
 ];
 
 const CAMPUSES = ['Nairobi', 'Juja', 'Thika', 'Homabay', 'Kisumu', 'Migori'];
+const ALL_CAMPUSES = 'All campuses';
+
+/* Role model: every account has one role. Campus roles are scoped to one campus;
+   executive roles oversee every campus; the owner only reaches app settings. */
+const ADMIN_ROLE_OPTIONS = [
+  { code: 'principal', label: 'College Principal', office: 'Principal’s Office' },
+  { code: 'accounts_clerk', label: 'Accounts Clerk', office: 'Finance Office' },
+  { code: 'campus_admin', label: 'Campus Admin', office: 'Campus Administration' },
+  { code: 'registrar', label: 'Registrar', office: 'Academic Registry' },
+  { code: 'qa_officer', label: 'Quality Assurance Officer', office: 'Quality Assurance' },
+  { code: 'exam_officer', label: 'Examination Officer', office: 'Examinations Office' },
+  { code: 'secretary', label: 'Secretary', office: 'Administration' }
+];
+const EXEC_ROLE_OPTIONS = [
+  { code: 'director', label: 'Director', office: 'Directorate' },
+  { code: 'deputy_director', label: 'Deputy Director', office: 'Directorate' },
+  { code: 'general_admin', label: 'General Admin', office: 'Central Administration' }
+];
+const ADMIN_ROLES = ['owner', 'director', 'deputy_director', 'general_admin', 'principal', 'campus_admin', 'registrar', 'exam_officer', 'qa_officer', 'accounts_clerk', 'secretary'];
+const EXEC_ROLES = ['director', 'deputy_director', 'general_admin'];
+const STAFF_ROLES = ['lecturer'].concat(ADMIN_ROLES);
+
+/* Who approves which registration. Principal signs off campus staff,
+   campus admin signs off students, director signs off executive members,
+   and the owner signs off principals and the director. */
+const APPROVER_BY_ROLE = {
+  student: 'campus_admin',
+  lecturer: 'principal',
+  campus_admin: 'principal',
+  registrar: 'principal',
+  exam_officer: 'principal',
+  qa_officer: 'principal',
+  accounts_clerk: 'principal',
+  secretary: 'principal',
+  deputy_director: 'director',
+  general_admin: 'director',
+  principal: 'owner',
+  director: 'owner'
+};
+const ROLE_RANK = {
+  owner: 100, director: 90, deputy_director: 80, general_admin: 75, principal: 70,
+  registrar: 60, exam_officer: 60, qa_officer: 60, accounts_clerk: 60, campus_admin: 60, secretary: 60,
+  lecturer: 40, council: 30, student: 20
+};
+const ROLE_LABELS = {
+  owner: 'System Owner', director: 'Director', deputy_director: 'Deputy Director', general_admin: 'General Admin',
+  principal: 'College Principal', campus_admin: 'Campus Admin', registrar: 'Registrar',
+  exam_officer: 'Examination Officer', qa_officer: 'Quality Assurance Officer',
+  accounts_clerk: 'Accounts Clerk', secretary: 'Secretary', lecturer: 'Lecturer', student: 'Student', council: 'Student Council'
+};
+
+function isAdminRole(role) { return ADMIN_ROLES.indexOf(role) !== -1; }
+function isExecRole(role) { return EXEC_ROLES.indexOf(role) !== -1; }
+function isStaffRole(role) { return role === 'lecturer' || isAdminRole(role); }
+function isCampusRole(role) { return role === 'principal' || role === 'campus_admin' || role === 'registrar' || role === 'exam_officer' || role === 'qa_officer' || role === 'accounts_clerk' || role === 'secretary'; }
+function roleCodeFromLabel(label) {
+  const all = ADMIN_ROLE_OPTIONS.concat(EXEC_ROLE_OPTIONS);
+  const found = all.find(r => r.label === label || r.code === label);
+  return found ? found.code : null;
+}
+function roleOffice(role) {
+  const found = ADMIN_ROLE_OPTIONS.concat(EXEC_ROLE_OPTIONS).find(r => r.code === role);
+  return found ? found.office : 'Administration';
+}
 
 const DEFAULT_PAYBILLS = {
   fees: {
@@ -243,13 +307,22 @@ const DEFAULT_PAYBILLS = {
 };
 
 const STAFF_MEMBERS = [
-  { id: 'u_admin', name: 'Dr. Mary Wambui', role: 'admin', title: 'Registrar & Portal Administrator', email: 'admin@tsmhst.co.ke', phone: '+254112970334', department: 'Administration' },
-  { id: 'u_admin2', name: 'Samuel Kariuki', role: 'admin', title: 'ICT & Portal Administrator', email: 'ict@tsmhst.co.ke', phone: '+254700129536', department: 'ICT' },
-  { id: 'u_council', name: 'Brian Otieno', role: 'council', title: 'Student Council President', email: 'council@tsmhst.co.ke', phone: '+254700000760', department: 'Student Council' },
-  { id: 'u_council2', name: 'Faith Wanjiku', role: 'council', title: 'Student Council — Academic Affairs', email: 'academics.council@tsmhst.co.ke', phone: '+254700000292', department: 'Student Council' },
-  { id: 'u_lec1', name: 'Ms. Jane Ochieng', role: 'lecturer', title: 'Lecturer, Community Health', email: 'j.ochieng@tsmhst.co.ke', phone: '+254700000506', department: 'Department of Health Sciences', staffNo: 'TSM/LEC/001' },
-  { id: 'u_lec2', name: 'Dr. Peter Kamau', role: 'lecturer', title: 'Senior Lecturer, Applied Health Sciences', email: 'p.kamau@tsmhst.co.ke', phone: '+254700000272', department: 'Department of Health Sciences', staffNo: 'TSM/LEC/002' },
-  { id: 'u_lec3', name: 'Ms. Grace Achieng', role: 'lecturer', title: 'Lecturer, Business & Communication', email: 'g.achieng@tsmhst.co.ke', phone: '+254114569011', department: 'Department of Business & Information', staffNo: 'TSM/LEC/003' }
+  { id: 'u_owner', name: 'Office of the Proprietor', role: 'owner', title: 'System Owner', email: 'owner@tsmhst.co.ke', phone: '+254112970334', department: 'Ownership', campus: ALL_CAMPUSES },
+  { id: 'u_director', name: 'Dr. Joseph Mwangi', role: 'director', title: 'College Director', email: 'director@tsmhst.co.ke', phone: '+254700129536', department: 'Directorate', campus: ALL_CAMPUSES },
+  { id: 'u_deputy', name: 'Mrs. Alice Njoroge', role: 'deputy_director', title: 'Deputy Director', email: 'deputy@tsmhst.co.ke', phone: '+254700000760', department: 'Directorate', campus: ALL_CAMPUSES },
+  { id: 'u_admin2', name: 'Samuel Kariuki', role: 'general_admin', title: 'General Administrator', email: 'ict@tsmhst.co.ke', phone: '+254700129536', department: 'Central Administration', campus: ALL_CAMPUSES },
+  { id: 'u_principal', name: 'Mr. Patrick Ouma', role: 'principal', title: 'College Principal — Nairobi Campus', email: 'principal@tsmhst.co.ke', phone: '+254700000292', department: 'Principal’s Office', campus: 'Nairobi' },
+  { id: 'u_campus', name: 'Ms. Lucy Wairimu', role: 'campus_admin', title: 'Campus Administrator — Nairobi', email: 'campus@tsmhst.co.ke', phone: '+254700000506', department: 'Campus Administration', campus: 'Nairobi' },
+  { id: 'u_admin', name: 'Dr. Mary Wambui', role: 'registrar', title: 'Registrar', email: 'admin@tsmhst.co.ke', phone: '+254112970334', department: 'Academic Registry', campus: 'Nairobi' },
+  { id: 'u_exams', name: 'Mr. George Otieno', role: 'exam_officer', title: 'Examination Officer', email: 'exams@tsmhst.co.ke', phone: '+254700000272', department: 'Examinations Office', campus: 'Nairobi' },
+  { id: 'u_qa', name: 'Ms. Beatrice Achieng', role: 'qa_officer', title: 'Quality Assurance Officer', email: 'quality@tsmhst.co.ke', phone: '+254114569011', department: 'Quality Assurance', campus: ALL_CAMPUSES },
+  { id: 'u_accounts', name: 'Mrs. Esther Kamau', role: 'accounts_clerk', title: 'Accounts Clerk', email: 'accounts@tsmhst.co.ke', phone: '+254700129537', department: 'Finance Office', campus: 'Nairobi' },
+  { id: 'u_secretary', name: 'Ms. Diana Chepkoech', role: 'secretary', title: 'Secretary', email: 'secretary@tsmhst.co.ke', phone: '+254700129538', department: 'Administration', campus: 'Nairobi' },
+  { id: 'u_council', name: 'Brian Otieno', role: 'council', title: 'Student Council President', email: 'council@tsmhst.co.ke', phone: '+254700000760', department: 'Student Council', campus: 'Nairobi' },
+  { id: 'u_council2', name: 'Faith Wanjiku', role: 'council', title: 'Student Council — Academic Affairs', email: 'academics.council@tsmhst.co.ke', phone: '+254700000292', department: 'Student Council', campus: 'Nairobi' },
+  { id: 'u_lec1', name: 'Ms. Jane Ochieng', role: 'lecturer', title: 'Lecturer, Community Health', email: 'j.ochieng@tsmhst.co.ke', phone: '+254700000506', department: 'Department of Health Sciences', campus: 'Nairobi', staffNo: 'TSM/LEC/001' },
+  { id: 'u_lec2', name: 'Dr. Peter Kamau', role: 'lecturer', title: 'Senior Lecturer, Applied Health Sciences', email: 'p.kamau@tsmhst.co.ke', phone: '+254700000272', department: 'Department of Health Sciences', campus: 'Juja', staffNo: 'TSM/LEC/002' },
+  { id: 'u_lec3', name: 'Ms. Grace Achieng', role: 'lecturer', title: 'Lecturer, Business & Communication', email: 'g.achieng@tsmhst.co.ke', phone: '+254114569011', department: 'Department of Business & Information', campus: 'Thika', staffNo: 'TSM/LEC/003' }
 ];
 
 const STUDENT_NAMES = [
@@ -270,6 +343,12 @@ const STUDENT_NAMES = [
 const DEMO_ACCOUNTS = [
   { role: 'student', label: 'Student', identifier: 'TSMHST/CH/2026/001', password: 'Student@2026' },
   { role: 'lecturer', label: 'Lecturer', identifier: 'j.ochieng@tsmhst.co.ke', password: 'Lecturer@2026' },
-  { role: 'admin', label: 'Administrator', identifier: 'admin@tsmhst.co.ke', password: 'Admin@2026' },
+  { role: 'owner', label: 'Owner', identifier: 'owner@tsmhst.co.ke', password: 'Owner@2026' },
+  { role: 'director', label: 'Director', identifier: 'director@tsmhst.co.ke', password: 'Director@2026' },
+  { role: 'principal', label: 'Principal', identifier: 'principal@tsmhst.co.ke', password: 'Principal@2026' },
+  { role: 'campus_admin', label: 'Campus Admin', identifier: 'campus@tsmhst.co.ke', password: 'Campus@2026' },
+  { role: 'registrar', label: 'Registrar', identifier: 'admin@tsmhst.co.ke', password: 'Admin@2026' },
+  { role: 'exam_officer', label: 'Exam Officer', identifier: 'exams@tsmhst.co.ke', password: 'Exams@2026' },
+  { role: 'accounts_clerk', label: 'Accounts', identifier: 'accounts@tsmhst.co.ke', password: 'Accounts@2026' },
   { role: 'council', label: 'Student Council', identifier: 'council@tsmhst.co.ke', password: 'Council@2026' }
 ];

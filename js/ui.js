@@ -237,7 +237,15 @@ function fallbackCopy(text, done) {
 }
 
 function roleLabel(role) {
+  if (typeof ROLE_LABELS !== 'undefined' && ROLE_LABELS[role]) return ROLE_LABELS[role];
   return I18N.t(role === 'admin' ? 'Administrator' : role === 'council' ? 'Student Council' : role === 'lecturer' ? 'Lecturer' : 'Student');
+}
+
+function audienceLabel(audience) {
+  const map = { all: 'Everyone', students: 'Students', staff: 'Staff', admins: 'Administrators', council: 'Student Council' };
+  if (map[audience]) return map[audience];
+  if (typeof ROLE_LABELS !== 'undefined' && ROLE_LABELS[audience]) return ROLE_LABELS[audience];
+  return String(audience || 'Everyone');
 }
 
 function logo(size) {

@@ -7,9 +7,19 @@ const PORTAL_STATE = {
 
 const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 
+const PORTAL_NAV = [
+  { route: 'team', label: 'Team', icon: 'users' },
+  { route: 'about', label: 'About', icon: 'info' },
+  { route: 'settings', label: 'Settings', icon: 'settings' }
+];
+
 function navGroups(role) {
   const groups = [];
-  if (role === 'student') {
+  const portal = items => groups.push({ label: 'Portal', items: items || PORTAL_NAV });
+  const comms = () => groups.push({ label: 'Communication', items: [{ route: 'announcements', label: 'Announcements', icon: 'megaphone' }] });
+  if (role === 'owner') {
+    groups.push({ label: 'Owner', items: [{ route: 'settings', label: 'App settings', icon: 'settings' }] });
+  } else if (role === 'student') {
     groups.push({
       label: 'Main', items: [
         { route: 'home', label: 'Home', icon: 'home' },
@@ -26,15 +36,8 @@ function navGroups(role) {
         { route: 'hostel', label: 'Hostel', icon: 'bed' }
       ]
     });
-    groups.push({
-      label: 'Portal', items: [
-        { route: 'team', label: 'Team', icon: 'users' },
-        { route: 'about', label: 'About', icon: 'info' },
-        { route: 'settings', label: 'Settings', icon: 'settings' }
-      ]
-    });
-  }
-  if (role === 'lecturer') {
+    portal();
+  } else if (role === 'lecturer') {
     groups.push({
       label: 'Teaching', items: [
         { route: 'home', label: 'Home', icon: 'home' },
@@ -44,40 +47,93 @@ function navGroups(role) {
         { route: 'assignments', label: 'Assignments', icon: 'clipboard' }
       ]
     });
+    comms();
+    portal();
+  } else if (isExecRole(role)) {
     groups.push({
-      label: 'Portal', items: [
-        { route: 'team', label: 'Team', icon: 'users' },
-        { route: 'about', label: 'About', icon: 'info' },
-        { route: 'settings', label: 'Settings', icon: 'settings' }
+      label: 'Oversight', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'campuses', label: 'Campuses', icon: 'academics' },
+        { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+        { route: 'users', label: 'Users', icon: 'users' },
+        { route: 'marks', label: 'Marks oversight', icon: 'marks' }
       ]
     });
-  }
-  if (role === 'admin') {
+    comms();
+    groups.push({ label: 'Service', items: [{ route: 'quality', label: 'Quality assurance', icon: 'shield' }] });
+    portal();
+  } else if (role === 'principal') {
     groups.push({
-      label: 'Management', items: [
+      label: 'Campus', items: [
         { route: 'home', label: 'Home', icon: 'home' },
         { route: 'approvals', label: 'Approvals', icon: 'approvals' },
         { route: 'users', label: 'Users', icon: 'users' },
+        { route: 'payments', label: 'Payments', icon: 'wallet' },
+        { route: 'academics', label: 'Academics', icon: 'academics' }
+      ]
+    });
+    comms();
+    portal();
+  } else if (role === 'campus_admin') {
+    groups.push({
+      label: 'Campus', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+        { route: 'users', label: 'Users', icon: 'users' },
+        { route: 'payments', label: 'Payments', icon: 'wallet' }
+      ]
+    });
+    comms();
+    portal();
+  } else if (role === 'registrar') {
+    groups.push({
+      label: 'Academic registry', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
         { route: 'academics', label: 'Academics', icon: 'academics' },
+        { route: 'users', label: 'Users', icon: 'users' }
+      ]
+    });
+    comms();
+    portal();
+  } else if (role === 'exam_officer') {
+    groups.push({
+      label: 'Examinations', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
         { route: 'marks', label: 'Marks studio', icon: 'marks' },
-        { route: 'attendance', label: 'Attendance', icon: 'check' }
+        { route: 'academics', label: 'Academics', icon: 'academics' }
       ]
     });
+    comms();
+    portal();
+  } else if (role === 'qa_officer') {
     groups.push({
-      label: 'Finance & communication', items: [
-        { route: 'finance', label: 'Finance', icon: 'finance' },
-        { route: 'announcements', label: 'Announcements', icon: 'megaphone' }
+      label: 'Quality assurance', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'quality', label: 'Service quality', icon: 'shield' },
+        { route: 'campuses', label: 'Campuses', icon: 'academics' }
       ]
     });
+    comms();
+    portal();
+  } else if (role === 'accounts_clerk') {
     groups.push({
-      label: 'Portal', items: [
-        { route: 'team', label: 'Team', icon: 'users' },
-        { route: 'about', label: 'About', icon: 'info' },
-        { route: 'settings', label: 'Settings', icon: 'settings' }
+      label: 'Finance office', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'finance', label: 'Finance', icon: 'finance' }
       ]
     });
-  }
-  if (role === 'council') {
+    comms();
+    portal();
+  } else if (role === 'secretary') {
+    groups.push({
+      label: 'Administration', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'announcements', label: 'Announcements', icon: 'megaphone' },
+        { route: 'users', label: 'Users', icon: 'users' }
+      ]
+    });
+    portal();
+  } else if (role === 'council') {
     groups.push({
       label: 'Student Council', items: [
         { route: 'home', label: 'Home', icon: 'home' },
@@ -100,33 +156,90 @@ function routeTitle(route) {
     home: 'Home', units: 'Units', assignments: 'Assignments', results: 'Results', transcript: 'Transcript',
     fees: 'Fees', hostel: 'Hostel', attendance: 'Attendance', team: 'Team & presence', about: 'About',
     settings: 'Settings', notifications: 'Notifications', approvals: 'Approvals', users: 'Users',
-    academics: 'Academics', marks: 'Marks studio', finance: 'Finance', announcements: 'Announcements'
+    academics: 'Academics', marks: 'Marks studio', finance: 'Finance', announcements: 'Announcements',
+    campuses: 'Campuses', payments: 'Payments', quality: 'Service quality'
   };
   return titles[route] || 'Portal';
 }
 
 function bottomNav(role) {
+  const home = { route: 'home', label: 'Home', icon: 'home' };
   const sets = {
+    owner: [{ route: 'settings', label: 'App settings', icon: 'settings' }],
     student: [
-      { route: 'home', label: 'Home', icon: 'home' },
+      home,
       { route: 'units', label: 'Units', icon: 'book' },
       { route: 'attendance', label: 'Attendance', icon: 'check' },
       { route: 'results', label: 'Results', icon: 'chart' }
     ],
     lecturer: [
-      { route: 'home', label: 'Home', icon: 'home' },
+      home,
       { route: 'units', label: 'My units', icon: 'book' },
       { route: 'attendance', label: 'Attendance', icon: 'check' },
-      { route: 'marks', label: 'Marks', icon: 'marks' }
+      { route: 'assignments', label: 'Assignments', icon: 'clipboard' }
     ],
-    admin: [
-      { route: 'home', label: 'Home', icon: 'home' },
+    director: [
+      home,
+      { route: 'campuses', label: 'Campuses', icon: 'academics' },
       { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+      { route: 'users', label: 'Users', icon: 'users' }
+    ],
+    deputy_director: [
+      home,
+      { route: 'campuses', label: 'Campuses', icon: 'academics' },
+      { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+      { route: 'users', label: 'Users', icon: 'users' }
+    ],
+    general_admin: [
+      home,
+      { route: 'campuses', label: 'Campuses', icon: 'academics' },
+      { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+      { route: 'users', label: 'Users', icon: 'users' }
+    ],
+    principal: [
+      home,
+      { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+      { route: 'users', label: 'Users', icon: 'users' },
+      { route: 'announcements', label: 'Notices', icon: 'megaphone' }
+    ],
+    campus_admin: [
+      home,
+      { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+      { route: 'users', label: 'Users', icon: 'users' },
+      { route: 'payments', label: 'Payments', icon: 'wallet' }
+    ],
+    registrar: [
+      home,
       { route: 'academics', label: 'Academics', icon: 'academics' },
-      { route: 'finance', label: 'Finance', icon: 'finance' }
+      { route: 'announcements', label: 'Notices', icon: 'megaphone' },
+      { route: 'team', label: 'Team', icon: 'users' }
+    ],
+    exam_officer: [
+      home,
+      { route: 'marks', label: 'Marks', icon: 'marks' },
+      { route: 'announcements', label: 'Notices', icon: 'megaphone' },
+      { route: 'team', label: 'Team', icon: 'users' }
+    ],
+    qa_officer: [
+      home,
+      { route: 'quality', label: 'Quality', icon: 'shield' },
+      { route: 'announcements', label: 'Notices', icon: 'megaphone' },
+      { route: 'team', label: 'Team', icon: 'users' }
+    ],
+    accounts_clerk: [
+      home,
+      { route: 'finance', label: 'Finance', icon: 'finance' },
+      { route: 'announcements', label: 'Notices', icon: 'megaphone' },
+      { route: 'team', label: 'Team', icon: 'users' }
+    ],
+    secretary: [
+      home,
+      { route: 'announcements', label: 'Notices', icon: 'megaphone' },
+      { route: 'team', label: 'Team', icon: 'users' },
+      { route: 'about', label: 'About', icon: 'info' }
     ],
     council: [
-      { route: 'home', label: 'Home', icon: 'home' },
+      home,
       { route: 'announcements', label: 'Announcements', icon: 'megaphone' },
       { route: 'team', label: 'Team', icon: 'users' },
       { route: 'about', label: 'About', icon: 'info' }
@@ -238,9 +351,10 @@ function authPage() {
           <h2 id="auth-title">${esc(I18N.t('Welcome back'))}</h2>
           <p id="auth-sub">${esc(I18N.t('Sign in to continue'))}</p>
         </div>
-        <div class="segmented auth-tabs" role="tablist">
+        <div class="segmented auth-tabs three" role="tablist">
           <button type="button" class="segment active" data-action="auth-tab" data-tab="signin" role="tab" aria-selected="true">${esc(I18N.t('Sign in'))}</button>
           <button type="button" class="segment" data-action="auth-tab" data-tab="register" role="tab" aria-selected="false">${esc(I18N.t('Register'))}</button>
+          <button type="button" class="segment" data-action="auth-tab" data-tab="executive" role="tab" aria-selected="false">Executive</button>
         </div>
         <div id="auth-alert" class="form-alert" hidden></div>
 
@@ -258,9 +372,10 @@ function authPage() {
         </form>
 
         <form data-form="register" id="register-form" class="auth-form" hidden>
-          <div class="radio-cards" data-reg-role-group>
-            <label class="radio-card active"><input type="radio" name="role" value="student" checked><span>${icon('graduation')}<strong>${esc(I18N.t('Student'))}</strong><small>Register for units, results & fees</small></span></label>
-            <label class="radio-card"><input type="radio" name="role" value="lecturer"><span>${icon('user')}<strong>${esc(I18N.t('Lecturer'))}</strong><small>Teach, mark & take attendance</small></span></label>
+          <div class="radio-cards three" data-reg-role-group>
+            <label class="radio-card active"><input type="radio" name="role" value="student" checked><span>${icon('graduation')}<strong>${esc(I18N.t('Student'))}</strong><small>Units, results & fees</small></span></label>
+            <label class="radio-card"><input type="radio" name="role" value="lecturer"><span>${icon('user')}<strong>${esc(I18N.t('Lecturer'))}</strong><small>Teach, mark & attendance</small></span></label>
+            <label class="radio-card"><input type="radio" name="role" value="admin"><span>${icon('shield')}<strong>College admin</strong><small>Registry, exams, finance</small></span></label>
           </div>
           <div class="form-grid two">
             <label class="field"><span>${esc(I18N.t('Full name'))}</span><input name="name" required placeholder="e.g. Jane Wanjiku"></label>
@@ -282,13 +397,39 @@ function authPage() {
           <div class="reg-lecturer-fields" hidden>
             <div class="form-grid two">
               <label class="field"><span>${esc(I18N.t('Staff number'))}</span><input name="staffNo" placeholder="TSM/LEC/004"></label>
-              <label class="field"><span>${esc(I18N.t('Department'))}</span><select name="department">${DEPARTMENTS.map(d => `<option>${esc(d)}</option>`).join('')}</select></label>
+              <label class="field"><span>${esc(I18N.t('Campus'))}</span><select name="staffCampus">${CAMPUSES.map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
+              <label class="field form-span"><span>${esc(I18N.t('Department'))}</span><select name="department">${DEPARTMENTS.map(d => `<option>${esc(d)}</option>`).join('')}</select></label>
             </div>
+            <p class="form-note">Approved by the College Principal of your campus.</p>
+          </div>
+          <div class="reg-admin-fields" hidden>
+            <div class="form-grid two">
+              <label class="field form-span"><span>Administrative role</span><select name="adminRole">${ADMIN_ROLE_OPTIONS.map(r => `<option value="${r.code}">${esc(r.label)}</option>`).join('')}</select></label>
+              <label class="field"><span>${esc(I18N.t('Staff number'))}</span><input name="staffNo" placeholder="TSM/ADM/004"></label>
+              <label class="field"><span>${esc(I18N.t('Campus'))}</span><select name="staffCampus">${CAMPUSES.map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
+            </div>
+            <p class="form-note">College admin accounts are approved by the Principal of the selected campus before first sign-in.</p>
           </div>
           <label class="field"><span>${esc(I18N.t('Confirm password'))}</span><input name="confirmPassword" type="password" minlength="6" required></label>
           <label class="checkline terms-line"><input type="checkbox" name="terms" required> <span>I agree to the ${''}<button type="button" class="link-btn inline" data-action="show-terms">${esc(I18N.t('Terms of use'))}</button></span></label>
           <button type="submit" class="btn btn-primary btn-block">${esc(I18N.t('Create account'))} ${icon('arrow')}</button>
-          <p class="form-note">${esc(I18N.t('Awaiting approval'))}: student and lecturer accounts are reviewed by the administrator before first sign-in.</p>
+          <p class="form-note">${esc(I18N.t('Awaiting approval'))}: accounts are reviewed by the approving office before first sign-in.</p>
+        </form>
+
+        <form data-form="register" id="executive-form" class="auth-form" hidden>
+          <div class="form-alert info">Directorate registration oversees activities across <strong>all campuses</strong>. These accounts are approved by the System Owner.</div>
+          <div class="form-grid two">
+            <label class="field form-span"><span>Directorate role</span><select name="adminRole">${EXEC_ROLE_OPTIONS.map(r => `<option value="${r.code}">${esc(r.label)}</option>`).join('')}</select></label>
+            <label class="field"><span>${esc(I18N.t('Full name'))}</span><input name="name" required placeholder="e.g. Dr. Joseph Mwangi"></label>
+            <label class="field"><span>${esc(I18N.t('Email'))}</span><input name="email" type="email" required placeholder="director@example.com"></label>
+            <label class="field"><span>${esc(I18N.t('Phone number'))}</span><input name="phone" type="tel" placeholder="+254 7xx xxx xxx"></label>
+            <label class="field"><span>${esc(I18N.t('Staff number'))}</span><input name="staffNo" placeholder="TSM/EXEC/004"></label>
+            <label class="field"><span>${esc(I18N.t('Password'))}</span><input name="password" type="password" minlength="6" required placeholder="At least 6 characters"></label>
+            <label class="field"><span>${esc(I18N.t('Confirm password'))}</span><input name="confirmPassword" type="password" minlength="6" required></label>
+          </div>
+          <p class="form-note">Scope: all campuses · ${CAMPUSES.length} campuses under directorate oversight.</p>
+          <label class="checkline terms-line"><input type="checkbox" name="terms" required> <span>I agree to the ${''}<button type="button" class="link-btn inline" data-action="show-terms">${esc(I18N.t('Terms of use'))}</button></span></label>
+          <button type="submit" class="btn btn-primary btn-block">${esc(I18N.t('Create account'))} ${icon('arrow')}</button>
         </form>
 
         <div class="demo-box">
@@ -325,6 +466,9 @@ function renderPage(user, route) {
   if (route === 'approvals') return renderApprovals(user);
   if (route === 'users') return renderUsers(user);
   if (route === 'finance') return renderFinance(user);
+  if (route === 'payments') return renderPayments(user);
+  if (route === 'campuses') return renderCampuses(user);
+  if (route === 'quality') return renderQuality(user);
   if (route === 'announcements') return renderAnnouncements(user);
   return renderHome(user);
 }
@@ -351,7 +495,7 @@ function announcementList(user, limit) {
 }
 
 function leadershipCard(user) {
-  const leaders = DB.team().filter(m => m.role === 'admin' || m.role === 'council');
+  const leaders = DB.team().filter(m => isAdminRole(m.role) || m.role === 'council');
   const online = leaders.filter(m => m.presence.online).length;
   return `<div class="card">
     <div class="card-head"><div><h2>${esc(I18N.t('Portal team'))}</h2><p class="card-sub">${esc(I18N.t('Presence shows who is signed in right now.'))}</p></div><a class="card-link" href="#/team">${esc(I18N.t('View all'))} ${icon('chevron')}</a></div>
@@ -377,9 +521,9 @@ function todayClasses(user, units) {
 }
 
 function renderHome(user) {
-  if (user.role === 'admin') return renderAdminHome(user);
   if (user.role === 'council') return renderCouncilHome(user);
   if (user.role === 'lecturer') return renderLecturerHome(user);
+  if (isAdminRole(user.role)) return renderOfficeHome(user);
 
   const regs = DB.registrationsFor(user.id, DB.data.meta.termCode);
   const units = regs.map(r => DB.unit(r.unitCode)).filter(Boolean);
@@ -498,61 +642,6 @@ function renderLecturerHome(user) {
       ${recentSubs.length ? `<div class="task-list">${recentSubs.slice(0, 5).map(({ a, s }) => { const st = DB.user(s.studentId); return `<button type="button" class="task-row task-button" data-action="assignment-open" data-id="${a.id}"><span class="avatar avatar-student sm">${esc(initials(st ? st.name : '?'))}</span><span class="task-copy"><strong>${esc(st ? st.name : 'Student')}</strong><small>${esc(a.title)} · ${esc(a.unitCode)}</small></span><span class="chip chip-soft">${icon('chevron')}</span></button>`; }).join('')}</div>` : `<div class="inline-success">${icon('checkCircle')} No submissions are waiting for a grade.</div>`}
     </div>
     ${leadershipCard(user)}
-  </div>`;
-}
-
-function renderAdminHome(user) {
-  const pending = DB.pendingUsers();
-  const students = DB.data.users.filter(u => u.role === 'student' && u.status === 'active');
-  const finance = DB.financeSummary();
-  const pay = DB.data.payments;
-  return `${pageHead(`${greeting()}, ${user.name.split(' ')[0]}`, 'Portal administration overview',
-    `<a class="btn btn-primary btn-sm" href="#/approvals">${icon('approvals')} ${esc(I18N.t('Pending registrations'))}${pending.length ? ` <span class="btn-count">${pending.length}</span>` : ''}</a>`)}
-  <div class="hero-card admin-hero">
-    <div class="hero-copy">
-      <span class="eyebrow light">Administration</span>
-      <h2>${esc(DB.data.meta.termLabel)}</h2>
-      <p>${DB.data.meta.registrationOpen ? 'Unit registration is open' : 'Unit registration is closed'} · ${students.length} active students · ${DB.data.units.filter(u => u.current).length} units</p>
-      <div class="hero-actions"><a class="btn btn-light btn-sm" href="#/academics">${icon('academics')} Manage academics</a><a class="btn btn-outline-light btn-sm" href="#/finance">${icon('finance')} Finance desk</a></div>
-    </div>
-    <div class="hero-metric"><span>Payments to verify</span><strong class="smaller">${finance.pendingCount}</strong><small>${money(finance.pending)} awaiting verification</small></div>
-  </div>
-  <div class="stats-grid">
-    ${statCard(I18N.t('Pending registrations'), String(pending.length), pending.length ? 'Awaiting your review' : 'Nothing pending', 'approvals', pending.length ? 'amber' : '')}
-    ${statCard(I18N.t('Active students'), String(students.length), 'Approved portal accounts', 'graduation', 'green')}
-    ${statCard(I18N.t('Payments to verify'), String(finance.pendingCount), money(finance.pending) + ' pending', 'finance', finance.pendingCount ? 'amber' : '')}
-  </div>
-  <div class="dash-grid">
-    <div class="card">
-      <div class="card-head"><div><h2>${esc(I18N.t('Pending registrations'))}</h2><p class="card-sub">New students and lecturers</p></div><a class="card-link" href="#/approvals">${esc(I18N.t('View all'))}</a></div>
-      ${pending.length ? `<div class="task-list">${pending.slice(0, 4).map(u => `<div class="task-row"><span class="avatar avatar-${u.role} sm">${esc(initials(u.name))}</span><span class="task-copy"><strong>${esc(u.name)}</strong><small>${esc(roleLabel(u.role))} · ${esc(u.email)}</small></span><button type="button" class="btn btn-primary btn-xs" data-action="approval-approve" data-user="${u.id}">${esc(I18N.t('Approve'))}</button></div>`).join('')}</div>` : `<div class="inline-success">${icon('checkCircle')} No registrations are waiting for approval.</div>`}
-    </div>
-    <div class="card">
-      <div class="card-head"><div><h2>${esc(I18N.t('Payment'))}</h2><p class="card-sub">Latest pending M-Pesa payments</p></div><a class="card-link" href="#/finance">${esc(I18N.t('View all'))}</a></div>
-      ${finance.pendingCount ? `<div class="task-list">${DB.recentPendingPayments().slice(0, 4).map(p => { const s = DB.user(p.studentId); return `<div class="task-row"><span class="task-icon">${icon('wallet')}</span><span class="task-copy"><strong>${money(p.amount)} · ${esc(p.reference)}</strong><small>${esc(s ? s.name : 'Student')} · ${esc(fmtDate(p.createdAt))}</small></span><button type="button" class="btn btn-primary btn-xs" data-action="payment-verify" data-payment="${p.id}">${esc(I18N.t('Verify'))}</button></div>`; }).join('')}</div>` : `<div class="inline-success">${icon('checkCircle')} No payments are awaiting verification.</div>`}
-    </div>
-  </div>
-  <div class="dash-grid">
-    <div class="card">
-      <div class="card-head"><div><h2>${esc(I18N.t('Registration window'))}</h2><p class="card-sub">Current academic settings</p></div><a class="card-link" href="#/academics">Manage</a></div>
-      <div class="status-panel ${DB.data.meta.registrationOpen ? 'ok' : 'closed'}">
-        <span class="status-dot"></span>
-        <div><strong>${DB.data.meta.registrationOpen ? 'Registration is open' : 'Registration is closed'}</strong><small>${esc(DB.data.meta.termLabel)} · deadline ${esc(fmtDate(DB.data.meta.registrationDeadline))}</small></div>
-        ${statusBadge(DB.data.meta.registrationOpen ? 'open' : 'closed')}
-      </div>
-      <div class="mini-results"><div class="mini-result"><span><strong>${DB.data.units.filter(u => u.current).length}</strong><small>Current units</small></span><span><strong>${PORTAL_PROGRAMMES.length}</strong><small>Programmes</small></span><span><strong>${DB.data.registrations.filter(r => r.termCode === DB.data.meta.termCode).length}</strong><small>Registrations</small></span></div></div>
-      <div class="inline-actions"><a class="btn btn-ghost btn-sm" href="#/users">${icon('users')} User directory</a><a class="btn btn-ghost btn-sm" href="#/announcements">${icon('megaphone')} Post announcement</a></div>
-    </div>
-    ${leadershipCard(user)}
-  </div>
-  <div class="dash-grid">
-    <div class="card"><div class="card-head"><div><h2>${esc(I18N.t('Announcements'))}</h2><p class="card-sub">Recent notices</p></div><a class="card-link" href="#/announcements">${esc(I18N.t('View all'))}</a></div>${announcementList(user, 3)}</div>
-    <div class="card">
-      <div class="card-head"><div><h2>Finance snapshot</h2><p class="card-sub">Paybill & payments</p></div></div>
-      <div class="paybill-mini"><span>Fees paybill</span><strong>${esc(DB.data.meta.paybills.fees.paybill)}</strong></div>
-      <div class="paybill-mini"><span>Hostel Buy Goods (Till)</span><strong>${esc(DB.data.meta.paybills.hostel.paybill)}</strong></div>
-      <div class="inline-actions" style="margin-top:12px"><a class="btn btn-ghost btn-sm" href="#/finance">${icon('finance')} Open finance</a><a class="btn btn-ghost btn-sm" href="#/attendance">${icon('check')} Sessions</a></div>
-    </div>
   </div>`;
 }
 
@@ -741,7 +830,7 @@ function renderResults(user) {
       <div class="card-head"><div><h2>${esc(g.label)}</h2><p class="card-sub">${g.marks.length} unit${g.marks.length === 1 ? '' : 's'} · ${g.termCode === DB.data.meta.termCode ? 'Current term' : 'Previous term'}</p></div><span class="chip chip-soft">${esc(g.termCode)}</span></div>
       <div class="table-wrap"><table class="data-table results-table">
         <thead><tr><th>Unit</th><th>Credits</th><th>CAT 1</th><th>CAT 2</th><th>Exam</th><th>Total</th><th>Grade</th><th>Points</th></tr></thead>
-        <tbody>${g.marks.map(m => { const u = DB.unit(m.unitCode); return `<tr><td><strong>${esc(m.unitCode)}</strong><small class="cell-sub">${esc(u ? u.title : '')}</small></td><td>${u ? u.credits : '—'}</td><td>${m.cat1}/20</td><td>${m.cat2}/20</td><td>${m.exam}/60</td><td><strong>${m.total}%</strong></td><td><span class="grade-pill grade-${m.grade}">${m.grade}</span></td><td>${m.points.toFixed(1)}</td></tr>`; }).join('')}</tbody>
+        <tbody>${g.marks.map(m => { const u = DB.unit(m.unitCode); return `<tr><td><strong>${esc(m.unitCode)}</strong><small class="cell-sub">${esc(u ? u.title : '')}</small></td><td>${u ? u.credits : '—'}</td><td>${m.cat1}/30</td><td>${m.cat2}/30</td><td>${m.exam}/70</td><td><strong>${m.total}%</strong></td><td><span class="grade-pill grade-${m.grade}">${m.grade}</span></td><td>${m.points.toFixed(1)}</td></tr>`; }).join('')}</tbody>
       </table></div>
     </div>`).join('') : `<div class="card">${emptyState('chart', 'No published results', 'Your lecturers have not published results yet. Check back after assessments are marked.')}</div>`}
     <p class="page-note">${icon('info')} Results are provisional until confirmed by the Registrar. If a mark looks wrong, contact your lecturer or the academic office.</p>`;

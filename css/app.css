@@ -300,7 +300,18 @@ html[data-theme="dark"] .grade-D { background: #2c2116; color: #e0a163; }
 .avatar.sm { width: 34px; height: 34px; font-size: .74rem; }
 .avatar.lg { width: 56px; height: 56px; font-size: 1.05rem; }
 .avatar-lecturer { background: var(--maroon-050); color: var(--maroon); }
-.avatar-admin { background: #2b1a08; color: #f3d9a7; }
+.avatar-admin,
+.avatar-general_admin,
+.avatar-principal,
+.avatar-campus_admin,
+.avatar-registrar,
+.avatar-exam_officer,
+.avatar-qa_officer,
+.avatar-accounts_clerk,
+.avatar-secretary { background: #2b1a08; color: #f3d9a7; }
+.avatar-director,
+.avatar-deputy_director { background: #14261a; color: #bfe6c9; }
+.avatar-owner { background: #1d1d1f; color: #f0e2b8; }
 .avatar-council { background: var(--info-050); color: var(--info); }
 .avatar-student { background: var(--green-100); color: var(--green-700); }
 
@@ -394,6 +405,7 @@ html[dir="rtl"] .search-field input { padding: .66rem 2.6rem .66rem .9rem; }
 .inline-select:focus, .control:focus { outline: none; border-color: var(--green); box-shadow: 0 0 0 3px var(--green-050); }
 
 .radio-cards { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
+.radio-cards.three { grid-template-columns: repeat(3, 1fr); }
 .radio-card {
   position: relative; display: block; cursor: pointer;
   border: 1.5px solid var(--line-strong); border-radius: 12px;
@@ -1714,6 +1726,16 @@ table.compact th, table.compact td { padding: .5rem .7rem; }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 @keyframes popIn { from { opacity: 0; transform: translateY(10px) scale(.985); } to { opacity: 1; transform: none; } }
 
+/* Role workspaces */
+fieldset { border: 0; margin: 0; padding: 0; min-width: 0; }
+.qa-list { display: grid; gap: .7rem; }
+.qa-row { display: grid; grid-template-columns: minmax(0, 1fr) minmax(90px, 1.4fr) auto; align-items: center; gap: .8rem; font-size: .84rem; color: var(--ink-2); }
+.qa-row > span:first-child { font-weight: 600; color: var(--ink); }
+.qa-row strong { font-variant-numeric: tabular-nums; font-size: .82rem; }
+.qa-row .progress { margin: 0; }
+.owner-approvals { border: 1px solid var(--line-strong); }
+.form-alert.info { background: var(--info-050); color: var(--info); border-color: transparent; }
+
 /* RTL */
 html[dir="rtl"] .sidebar { inset: 0 0 0 auto; border-right: 0; border-left: 1px solid var(--line); }
 html[dir="rtl"] .app-main { margin-left: 0; margin-right: var(--sidebar-w); }
@@ -1818,6 +1840,7 @@ html[dir="rtl"] .notification-card.unread { border-left: 0; border-right: 4px so
   .unit-grid, .hostel-grid { grid-template-columns: 1fr; }
   .form-grid.two, .form-grid.three { grid-template-columns: 1fr; }
   .radio-cards { grid-template-columns: 1fr; }
+  .radio-cards.three { grid-template-columns: 1fr; }
   .objective-list { grid-template-columns: 1fr; }
   .help-grid { grid-template-columns: 1fr; }
   .info-grid { grid-template-columns: 1fr; }

@@ -2,6 +2,10 @@
 const DB_KEY = 'tsmhst.portal.v1';
 const SESSION_KEY = 'tsmhst.session.v1';
 const SEED_VERSION = 1;
+const CAT_MAX = 30;
+const EXAM_MAX = 70;
+const CAT_WEIGHT = 30;
+const EXAM_WEIGHT = 70;
 
 const nowMs = () => Date.now();
 const isoAt = offsetMs => new Date(nowMs() + offsetMs).toISOString();
@@ -55,6 +59,15 @@ function gradeFor(total) {
 
 function clamp(n, min, max) { return Math.max(min, Math.min(max, Number(n) || 0)); }
 
+/* CAT 1 and CAT 2 are each out of 30 and are averaged into a 30-mark
+   coursework score; the main exam is out of 70. Final mark is out of 100. */
+function markTotal(cat1, cat2, exam) {
+  return Math.round(((Number(cat1) || 0) + (Number(cat2) || 0)) / 2 + (Number(exam) || 0));
+}
+function catAverage(cat1, cat2) {
+  return Math.round((((Number(cat1) || 0) + (Number(cat2) || 0)) / 2) * 10) / 10;
+}
+
 function deepCopy(obj) { return JSON.parse(JSON.stringify(obj)); }
 
 function programmeFor(code) { return PORTAL_PROGRAMMES.find(p => p.code === code) || PORTAL_PROGRAMMES[0]; }
@@ -75,14 +88,14 @@ const DB = {
     if (raw) {
       try {
         const parsed = JSON.parse(raw);
-        if (parsed.schema === SEED_VERSION) { this.data = parsed; this.migrate(); return; }
+        if (parsed.schema === SEED_VERSION) { this.data = parsed; await this.migrate(); return; }
       } catch (e) { /* reseed below */ }
     }
     this.data = await this.seed();
     this.save();
   },
 
-  migrate() {
+  async migrate() {
     const meta = this.data && this.data.meta;
     if (!meta) return;
     if (!meta.paybillsVersion || meta.paybillsVersion < 2) {
@@ -97,6 +110,54 @@ const DB = {
       meta.hostelsVersion = 1;
       this.save();
     }
+    if (!meta.rolesVersion) {
+      this.data.users.forEach(u => {
+        if (u.role === 'admin') u.role = 'general_admin';
+        if (isStaffRole(u.role) && !u.campus) u.campus = u.role === 'general_admin' ? ALL_CAMPUSES : 'Nairobi';
+      });
+      meta.rolesVersion = 1;
+      this.save();
+    }
+    if (!meta.marksVersion) {
+      this.data.marks.forEach(m => {
+        const legacy = (Number(m.cat1) || 0) <= 20 && (Number(m.cat2) || 0) <= 20 && (Number(m.exam) || 0) <= 60;
+        if (legacy) {
+          m.cat1 = Math.round((Number(m.cat1) || 0) / 20 * CAT_MAX);
+          m.cat2 = Math.round((Number(m.cat2) || 0) / 20 * CAT_MAX);
+          m.exam = Math.round((Number(m.exam) || 0) / 60 * EXAM_MAX);
+        }
+        m.total = markTotal(m.cat1, m.cat2, m.exam);
+        const g = gradeFor(m.total);
+        m.grade = g.grade;
+        m.points = g.points;
+      });
+      meta.marksVersion = 1;
+      this.save();
+    }
+    await this.ensureStaffAccounts();
+  },
+
+  async ensureStaffAccounts() {
+    const passwords = {
+      u_owner: 'Owner@2026', u_director: 'Director@2026', u_deputy: 'Deputy@2026',
+      u_admin: 'Admin@2026', u_admin2: 'Admin@2026', u_principal: 'Principal@2026',
+      u_campus: 'Campus@2026', u_exams: 'Exams@2026', u_qa: 'Quality@2026',
+      u_accounts: 'Accounts@2026', u_secretary: 'Secretary@2026',
+      u_council: 'Council@2026', u_council2: 'Council@2026',
+      u_lec1: 'Lecturer@2026', u_lec2: 'Lecturer@2026', u_lec3: 'Lecturer@2026'
+    };
+    let changed = false;
+    for (const person of STAFF_MEMBERS) {
+      if (this.data.users.some(u => u.id === person.id)) continue;
+      const salt = randomSalt();
+      this.data.users.push(Object.assign({}, person, {
+        status: 'active', createdAt: isoAt(0),
+        password: await hashPassword(passwords[person.id] || 'Admin@2026', salt), salt,
+        settings: deepCopy(DEFAULT_SETTINGS)
+      }));
+      changed = true;
+    }
+    if (changed) this.save();
   },
 
   save() {
@@ -117,7 +178,11 @@ const DB = {
     const createdAt = isoAt(0);
     const users = [];
     const passwordFor = {
-      u_admin: 'Admin@2026', u_admin2: 'Admin@2026', u_council: 'Council@2026', u_council2: 'Council@2026',
+      u_owner: 'Owner@2026', u_director: 'Director@2026', u_deputy: 'Deputy@2026',
+      u_admin: 'Admin@2026', u_admin2: 'Admin@2026', u_principal: 'Principal@2026',
+      u_campus: 'Campus@2026', u_exams: 'Exams@2026', u_qa: 'Quality@2026',
+      u_accounts: 'Accounts@2026', u_secretary: 'Secretary@2026',
+      u_council: 'Council@2026', u_council2: 'Council@2026',
       u_lec1: 'Lecturer@2026', u_lec2: 'Lecturer@2026', u_lec3: 'Lecturer@2026'
     };
     const staff = deepCopy(STAFF_MEMBERS);
@@ -155,30 +220,24 @@ const DB = {
     const marks = [];
     const currDch = currentUnits.filter(u => u.programme === 'DCH6');
     const markTargets = [58, 62, 66, 70, 74, 78, 82, 86, 90, 64, 72, 80];
+    const seedMark = (student, unit, target, published) => {
+      const cat1 = clamp(Math.round(target * 0.3) + 2, 5, CAT_MAX);
+      const cat2 = clamp(Math.round(target * 0.3) - 1, 5, CAT_MAX);
+      const exam = clamp(Math.round(target - (cat1 + cat2) / 2), 0, EXAM_MAX);
+      const total = markTotal(cat1, cat2, exam);
+      const g = gradeFor(total);
+      marks.push({
+        id: uid('mk'), studentId: student.id, unitCode: unit.code, termCode: unit.termCode || '2026-T3',
+        cat1, cat2, exam, total, grade: g.grade, points: g.points,
+        published, updatedAt: createdAt
+      });
+    };
     students.forEach((s, si) => {
       currDch.forEach((u, ui) => {
-        const total = markTargets[(si + ui * 3) % markTargets.length] + (ui === 1 ? 2 : 0);
-        const cat1 = clamp(Math.round(total * 0.2), 5, 20);
-        const cat2 = clamp(Math.round(total * 0.2), 5, 20);
-        const exam = clamp(total - cat1 - cat2, 0, 60);
-        const g = gradeFor(total);
-        marks.push({
-          id: uid('mk'), studentId: s.id, unitCode: u.code, termCode: '2026-T3',
-          cat1, cat2, exam, total, grade: g.grade, points: g.points,
-          published: u.code !== 'ICT105', updatedAt: createdAt
-        });
+        seedMark(s, u, markTargets[(si + ui * 3) % markTargets.length] + (ui === 1 ? 2 : 0), u.code !== 'ICT105');
       });
       UNITS.filter(u => !u.current && u.programme === 'DCH6').forEach((u, ui) => {
-        const total = 60 + ((si * 5 + ui * 9) % 36);
-        const cat1 = clamp(Math.round(total * 0.2), 5, 20);
-        const cat2 = clamp(Math.round(total * 0.2), 5, 20);
-        const exam = clamp(total - cat1 - cat2, 0, 60);
-        const g = gradeFor(total);
-        marks.push({
-          id: uid('mk'), studentId: s.id, unitCode: u.code, termCode: u.termCode,
-          cat1, cat2, exam, total, grade: g.grade, points: g.points,
-          published: true, updatedAt: createdAt
-        });
+        seedMark(s, u, 60 + ((si * 5 + ui * 9) % 36), true);
       });
     });
 
@@ -299,7 +358,7 @@ const DB = {
       { id: 'nt_4', type: 'system', title: 'Welcome to the TSMHST Portal', message: 'Your portal account is active. You can register units, access assignments, view results, check fees and sign in for classes here. Visit Settings to choose your theme, font size and language.', userId: 'u_stu1', createdBy: 'u_admin', createdAt: isoAt(-10 * DAY) },
       { id: 'nt_5', type: 'system', title: 'ANA102 assignment graded', message: 'Your Anatomy labelling exercise has been graded. Open Assignments to view the score and feedback.', userId: 'u_stu1', createdBy: 'u_lec2', createdAt: isoAt(-2 * DAY) },
       { id: 'nt_6', type: 'system', title: 'Fee balance reminder', message: 'Your verified fee balance is Ksh. 4,000. Please clear it before the end of term. A pending payment of Ksh. 4,500 is currently awaiting finance verification.', userId: 'u_stu1', createdBy: 'u_admin', createdAt: isoAt(-12 * 3600000) },
-      { id: 'nt_7', type: 'system', title: 'Payments awaiting verification', message: 'There are pending fee payments in the finance desk. Open Finance to verify the latest transaction references.', audience: 'admins', createdBy: 'u_stu1', createdAt: isoAt(-3 * 3600000) }
+      { id: 'nt_7', type: 'system', title: 'Payments awaiting verification', message: 'There are pending fee payments for Nairobi campus students. Open Payments to verify the latest transaction references.', audience: 'role', role: 'campus_admin', campus: 'Nairobi', createdBy: 'u_campus', createdAt: isoAt(-3 * 3600000) }
     ];
 
     const presence = {};
@@ -319,6 +378,8 @@ const DB = {
         registrationDeadline: '2026-12-05',
         paybills: deepCopy(DEFAULT_PAYBILLS),
         paybillsVersion: 2,
+        rolesVersion: 1,
+        marksVersion: 1,
         nextAdmissionSeq: 13
       },
       users, units: deepCopy(UNITS), registrations, marks, invoices, payments,
@@ -338,7 +399,7 @@ const DB = {
     if (!ses || !ses.userId) return null;
     return this.data.users.find(u => u.id === ses.userId && u.status === 'active') || null;
   },
-  isStaff(user) { return user && (user.role === 'admin' || user.role === 'lecturer'); },
+  isStaff(user) { return !!user && isStaffRole(user.role); },
 
   touchPresence() {
     const user = this.currentUser();
@@ -379,19 +440,23 @@ const DB = {
     const email = String(payload.email || '').trim().toLowerCase();
     const admissionNo = String(payload.admissionNo || '').trim().toUpperCase();
     const staffNo = String(payload.staffNo || '').trim().toUpperCase();
+    const allowed = ['student', 'lecturer'].concat(ADMIN_ROLE_OPTIONS.map(o => o.code), EXEC_ROLE_OPTIONS.map(o => o.code));
+    let role = String(payload.role || 'student');
+    if (role === 'admin' || role === 'executive') role = String(payload.adminRole || '');
+    if (allowed.indexOf(role) === -1) return { error: 'role' };
     if (!email || !payload.name || !payload.password) return { error: 'missing' };
     if (this.data.users.some(u => (u.email || '').toLowerCase() === email)) return { error: 'email' };
-    if (payload.role === 'student') {
+    if (role === 'student') {
       if (!admissionNo) return { error: 'admission' };
       if (this.data.users.some(u => (u.admissionNo || '').toUpperCase() === admissionNo)) return { error: 'admission' };
     }
-    if (payload.role === 'lecturer') {
+    if (isStaffRole(role)) {
       if (!staffNo) return { error: 'staff' };
       if (this.data.users.some(u => (u.staffNo || '').toUpperCase() === staffNo)) return { error: 'staff' };
     }
     const salt = randomSalt();
     const user = {
-      id: uid('usr'), role: payload.role === 'lecturer' ? 'lecturer' : 'student',
+      id: uid('usr'), role,
       name: String(payload.name).trim(), email,
       phone: String(payload.phone || '').trim(),
       status: 'pending', createdAt: isoAt(0),
@@ -405,29 +470,42 @@ const DB = {
       user.campus = payload.campus || 'Nairobi';
       user.department = programmeFor(user.programme).dept;
       user.title = 'Student, ' + programmeFor(user.programme).short;
+    } else if (user.role === 'lecturer') {
+      user.staffNo = staffNo;
+      user.campus = payload.campus || 'Nairobi';
+      user.department = payload.department || 'Department of Health Sciences';
+      user.title = 'Lecturer, ' + user.department.replace('Department of ', '') + ' — ' + user.campus;
     } else {
       user.staffNo = staffNo;
-      user.department = payload.department || 'Department of Health Sciences';
-      user.title = 'Lecturer, ' + user.department.replace('Department of ', '');
+      user.campus = isExecRole(user.role) ? ALL_CAMPUSES : (payload.campus || 'Nairobi');
+      user.department = roleOffice(user.role);
+      user.title = ROLE_LABELS[user.role] + (isExecRole(user.role) ? ' — all campuses' : ' — ' + user.campus);
     }
     this.data.users.push(user);
     this.save();
+    this.notifyApprovers(user);
     return { user };
   },
 
   approveUser(id, adminId) {
     const user = this.data.users.find(u => u.id === id);
-    if (!user) return;
+    if (!user) return { error: 'missing' };
+    const approver = this.data.users.find(u => u.id === adminId);
+    if (approver && !this.canApprove(approver, user)) return { error: 'forbidden' };
     user.status = 'active';
     user.approvedAt = isoAt(0);
     user.approvedBy = adminId || null;
     if (user.role === 'student') this.ensureInvoice(user);
+    const roleText = ROLE_LABELS[user.role] || 'member';
     this.addNotice({
       title: 'Your portal account is approved', type: 'system',
-      message: 'Welcome to the TSMHST Portal. You can now register units, view assignments and access your fees. Visit Settings to personalise the app.',
-      userId: user.id, createdBy: adminId || 'u_admin'
+      message: 'Welcome to the TSMHST Portal. Your ' + roleText + ' account is active. ' +
+        (user.role === 'student' ? 'You can now register units, view assignments and access your fees. ' : 'You can now open your workspace. ') +
+        'Visit Settings to personalise the app.',
+      userId: user.id, createdBy: adminId || 'u_owner'
     });
     this.save();
+    return { ok: true };
   },
 
   rejectUser(id, adminId) {
@@ -445,6 +523,42 @@ const DB = {
     user.status = status;
     this.save();
   },
+
+  canApprove(approver, target) {
+    if (!approver || !target) return false;
+    const a = approver.role;
+    const t = target.role;
+    if (a === 'owner') return t === 'principal' || t === 'director';
+    if (a === 'director') {
+      if (t === 'principal' || t === 'director' || t === 'owner') return false;
+      return isStaffRole(t);
+    }
+    if (a === 'principal') {
+      return ['lecturer', 'campus_admin', 'registrar', 'exam_officer', 'qa_officer', 'accounts_clerk', 'secretary'].indexOf(t) !== -1;
+    }
+    if (a === 'campus_admin') return t === 'student';
+    return false;
+  },
+  inScope(approver, target) {
+    if (!approver || !target) return false;
+    if (isExecRole(approver.role) || approver.role === 'owner' || approver.role === 'director') return true;
+    return (approver.campus || '') === (target.campus || '') || (approver.campus || '') === ALL_CAMPUSES;
+  },
+  pendingUsersFor(user) {
+    if (!user) return [];
+    return this.data.users.filter(u => u.status === 'pending' && this.canApprove(user, u) && this.inScope(user, u));
+  },
+  notifyApprovers(user) {
+    const role = APPROVER_BY_ROLE[user.role];
+    if (!role) return;
+    const scope = isExecRole(role) ? ALL_CAMPUSES : user.campus;
+    this.addNotice({
+      title: 'Registration awaiting approval', type: 'system',
+      message: user.name + ' registered as ' + (ROLE_LABELS[user.role] || 'member') + (scope ? ' for ' + scope : '') + '. Review the request in Approvals.',
+      audience: 'role', role, campus: scope, createdBy: user.id
+    });
+  },
+  approverRoleFor(role) { return APPROVER_BY_ROLE[role] || null; },
 
   ensureInvoice(user) {
     if (!user || user.role !== 'student') return;
@@ -545,10 +659,10 @@ const DB = {
     const term = termCode || this.data.meta.termCode;
     const now = isoAt(0);
     entries.forEach(entry => {
-      const cat1 = clamp(entry.cat1, 0, 20);
-      const cat2 = clamp(entry.cat2, 0, 20);
-      const exam = clamp(entry.exam, 0, 60);
-      const total = cat1 + cat2 + exam;
+      const cat1 = clamp(entry.cat1, 0, CAT_MAX);
+      const cat2 = clamp(entry.cat2, 0, CAT_MAX);
+      const exam = clamp(entry.exam, 0, EXAM_MAX);
+      const total = markTotal(cat1, cat2, exam);
       const g = gradeFor(total);
       let mark = this.data.marks.find(m => m.studentId === entry.studentId && m.unitCode === unitCode && m.termCode === term);
       if (!mark) {
@@ -565,11 +679,11 @@ const DB = {
     const students = this.studentsForUnit(unitCode, term);
     const now = isoAt(0);
     students.forEach(student => {
-      const total = 40 + Math.floor(Math.random() * 55);
-      const cat1 = clamp(Math.round(total * 0.2 + (Math.random() * 4 - 2)), 2, 20);
-      const cat2 = clamp(Math.round(total * 0.2 + (Math.random() * 4 - 2)), 2, 20);
-      const exam = clamp(total - cat1 - cat2, 0, 60);
-      const finalTotal = cat1 + cat2 + exam;
+      const target = 40 + Math.floor(Math.random() * 55);
+      const cat1 = clamp(Math.round(target * 0.3 + (Math.random() * 4 - 2)), 4, CAT_MAX);
+      const cat2 = clamp(Math.round(target * 0.3 + (Math.random() * 4 - 2)), 4, CAT_MAX);
+      const exam = clamp(Math.round(target - (cat1 + cat2) / 2), 10, EXAM_MAX);
+      const finalTotal = markTotal(cat1, cat2, exam);
       const g = gradeFor(finalTotal);
       let mark = this.data.marks.find(m => m.studentId === student.id && m.unitCode === unitCode && m.termCode === term);
       if (!mark) {
@@ -611,7 +725,7 @@ const DB = {
     return this.data.assignments.filter(a => unitCodes.includes(a.unitCode));
   },
   assignmentsForStaff(user) {
-    if (user.role === 'admin') return this.data.assignments.slice();
+    if (isAdminRole(user.role)) return this.data.assignments.slice();
     const unitCodes = this.unitsForLecturer(user.id).map(u => u.code);
     return this.data.assignments.filter(a => unitCodes.includes(a.unitCode));
   },
@@ -735,10 +849,11 @@ const DB = {
       reference: String(reference).trim().toUpperCase(), status: 'pending', createdAt: isoAt(0)
     };
     this.data.payments.push(payment);
+    const student = this.user(studentId) || {};
     this.addNotice({
       title: 'New payment awaiting verification', type: 'system',
-      message: (this.user(studentId) || {}).name + ' submitted Ksh. ' + amt.toLocaleString('en-KE') + ' with reference ' + payment.reference + '. Verify it in Finance.',
-      audience: 'admins', createdBy: studentId
+      message: student.name + ' submitted Ksh. ' + amt.toLocaleString('en-KE') + ' with reference ' + payment.reference + '. Verify it in Payments.',
+      audience: 'role', role: 'campus_admin', campus: student.campus, createdBy: studentId
     });
     this.save();
     return { ok: true, payment };
@@ -788,10 +903,11 @@ const DB = {
     if (existing) return { error: 'exists' };
     const booking = { id: uid('hb'), studentId, hostelId, termCode: this.data.meta.termCode, status: 'pending', createdAt: isoAt(0) };
     this.data.hostelBookings.push(booking);
+    const student = this.user(studentId) || {};
     this.addNotice({
       title: 'New hostel booking request', type: 'system',
-      message: (this.user(studentId) || {}).name + ' requested ' + (HOSTELS.find(h => h.id === hostelId) || {}).room + '. Review it in Finance.',
-      audience: 'admins', createdBy: studentId
+      message: student.name + ' requested ' + (HOSTELS.find(h => h.id === hostelId) || {}).room + '. Review it in Payments.',
+      audience: 'role', role: 'campus_admin', campus: student.campus, createdBy: studentId
     });
     this.save();
     return { ok: true, booking };
@@ -830,10 +946,12 @@ const DB = {
     if (!user) return [];
     return this.data.notices.filter(n => {
       if (n.userId) return n.userId === user.id;
+      if (n.campus && n.campus !== ALL_CAMPUSES && user.campus !== n.campus && user.campus !== ALL_CAMPUSES) return false;
+      if (n.role) return n.role === user.role;
       if (n.audience === 'all') return true;
       if (n.audience === 'students') return user.role === 'student' || user.role === 'council';
-      if (n.audience === 'staff') return user.role === 'lecturer' || user.role === 'admin';
-      if (n.audience === 'admins') return user.role === 'admin';
+      if (n.audience === 'staff') return isStaffRole(user.role);
+      if (n.audience === 'admins') return isAdminRole(user.role);
       if (n.audience === 'council') return user.role === 'council';
       return false;
     }).sort((a, b) => {
@@ -861,7 +979,7 @@ const DB = {
   createAnnouncement(payload, userId) {
     this.addNotice({
       title: payload.title, message: payload.message, type: 'announcement',
-      audience: payload.audience || 'all', createdBy: userId, pinned: !!payload.pinned
+      audience: payload.audience || 'all', campus: payload.campus || '', createdBy: userId, pinned: !!payload.pinned
     });
   },
   deleteNotice(id) {
@@ -880,15 +998,90 @@ const DB = {
     return { online: !!p.online && (nowMs() - p.lastSeen) < 90000, lastSeen: p.lastSeen };
   },
   team() {
-    const ids = STAFF_MEMBERS.map(m => m.id);
-    return this.data.users.filter(u => ids.includes(u.id) || u.role === 'lecturer').map(u => Object.assign({}, u, { presence: this.presenceOf(u.id) }));
+    return this.data.users
+      .filter(u => ((isStaffRole(u.role) && u.role !== 'owner') && u.status === 'active') || u.role === 'council')
+      .map(u => Object.assign({}, u, { presence: this.presenceOf(u.id) }));
   },
   pendingUsers() { return this.data.users.filter(u => u.status === 'pending'); },
   recentPendingPayments() { return this.data.payments.filter(p => p.status === 'pending').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); },
   financeSummary() {
+    const all = this.data.payments;
+    const pending = all.filter(p => p.status === 'pending');
+    const verified = all.filter(p => p.status === 'verified');
+    const billed = this.data.invoices.reduce((a, b) => a + b.total, 0);
     return {
-      pending: this.data.payments.filter(p => p.status === 'pending').reduce((a, b) => a + b.amount, 0),
-      pendingCount: this.data.payments.filter(p => p.status === 'pending').length
+      pending: pending.reduce((a, b) => a + b.amount, 0),
+      pendingCount: pending.length,
+      verified: verified.reduce((a, b) => a + b.amount, 0),
+      verifiedCount: verified.length,
+      billed,
+      total: all.length
+    };
+  },
+  usersForCampus(campus) {
+    if (!campus || campus === ALL_CAMPUSES) return this.data.users.slice();
+    return this.data.users.filter(u => u.campus === campus);
+  },
+  paymentsForCampus(campus) {
+    if (!campus || campus === ALL_CAMPUSES) return this.data.payments.slice();
+    const ids = this.data.users.filter(u => u.campus === campus).map(u => u.id);
+    return this.data.payments.filter(p => ids.indexOf(p.studentId) !== -1);
+  },
+  hostelBookingsForCampus(campus) {
+    if (!campus || campus === ALL_CAMPUSES) return this.data.hostelBookings.slice();
+    const ids = this.data.users.filter(u => u.campus === campus).map(u => u.id);
+    return this.data.hostelBookings.filter(b => ids.indexOf(b.studentId) !== -1);
+  },
+  attendancePercentFor(students) {
+    let held = 0, attended = 0;
+    students.forEach(s => { const a = this.overallAttendance(s.id); held += a.held; attended += a.attended; });
+    return { held, attended, percent: held ? Math.round(attended / held * 100) : 0 };
+  },
+  publishedRateFor(students) {
+    const ids = students.map(s => s.id);
+    const marks = this.data.marks.filter(m => ids.indexOf(m.studentId) !== -1);
+    const published = marks.filter(m => m.published).length;
+    return { total: marks.length, published, percent: marks.length ? Math.round(published / marks.length * 100) : 0 };
+  },
+  campusSummary() {
+    return CAMPUSES.map(campus => {
+      const users = this.data.users.filter(u => u.campus === campus);
+      const students = users.filter(u => u.role === 'student' && u.status === 'active');
+      const staff = users.filter(u => isStaffRole(u.role) && u.status === 'active');
+      const pending = this.data.users.filter(u => u.status === 'pending' && u.campus === campus);
+      const payments = this.paymentsForCampus(campus);
+      const attendance = this.attendancePercentFor(students);
+      return {
+        campus, students: students.length, staff: staff.length, pending: pending.length,
+        attendance: attendance.percent,
+        pendingPayments: payments.filter(p => p.status === 'pending').reduce((a, b) => a + b.amount, 0),
+        pendingPaymentCount: payments.filter(p => p.status === 'pending').length,
+        hostelRequests: this.hostelBookingsForCampus(campus).filter(b => b.status === 'pending').length
+      };
+    });
+  },
+  qualitySnapshot() {
+    const students = this.data.users.filter(u => u.role === 'student' && u.status === 'active');
+    const attendance = this.attendancePercentFor(students);
+    const published = this.publishedRateFor(students);
+    const pendingPayments = this.data.payments.filter(p => p.status === 'pending');
+    const openSessions = this.data.sessions.filter(s => s.status === 'open');
+    const units = this.data.units.filter(u => u.current);
+    const ungraded = this.data.submissions.filter(s => s.score === null).length;
+    return {
+      students: students.length,
+      staff: this.data.users.filter(u => isStaffRole(u.role) && u.status === 'active').length,
+      attendance: attendance.percent,
+      held: attendance.held,
+      published: published.percent,
+      publishedTotal: published.total,
+      pendingApprovals: this.data.users.filter(u => u.status === 'pending').length,
+      pendingPayments: pendingPayments.reduce((a, b) => a + b.amount, 0),
+      pendingPaymentCount: pendingPayments.length,
+      openSessions: openSessions.length,
+      units: units.length,
+      ungraded,
+      campuses: this.campusSummary()
     };
   },
 
