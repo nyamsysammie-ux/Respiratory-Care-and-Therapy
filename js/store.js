@@ -4,6 +4,8 @@ const SESSION_KEY = 'tsmhst.session.v1';
 const SEED_VERSION = 1;
 const CAT_MAX = 30;
 const EXAM_MAX = 70;
+const AUDIT_LIMIT = 400;
+const DOCUMENT_CATEGORIES = ['Policy', 'Examinations', 'Finance', 'Academic', 'Notice', 'Other'];
 const CAT_WEIGHT = 30;
 const EXAM_WEIGHT = 70;
 
@@ -79,6 +81,93 @@ const DEFAULT_SETTINGS = {
   noticesReadAt: 0
 };
 
+/* Standing documents every portal ships with. They are stored as plain
+   text so they work offline and can be exported to PDF on demand. */
+function seedDocuments() {
+  return [
+    {
+      id: 'doc_handbook', title: 'Student handbook & code of conduct', category: 'Policy',
+      summary: 'Attendance, assessment, discipline and campus life rules for all TSMHST students.',
+      audience: 'all', campus: ALL_CAMPUSES, body:
+`1. Attendance
+Students must attend at least 75% of scheduled classes in every unit. Attendance is recorded in the portal during each class session. A student below the 75% threshold may be barred from the end-of-term examination.
+
+2. Assessment
+Each unit is assessed through CAT 1 (30 marks), CAT 2 (30 marks) and a main examination (70 marks). The two CATs are averaged into a 30-mark coursework score. The final mark is out of 100 and is graded A (70+), B (60-69), C (50-59), D (40-49) and E (below 40).
+
+3. Conduct
+Students are expected to treat patients, staff and fellow students with respect. Professional confidentiality applies to every clinical attachment. Mobile phones must be silent during lectures and clinical sessions.
+
+4. Campus life
+Every student is issued with an admission number that must be quoted in all fee payments and official correspondence. Hostel accommodation is booked through the portal and paid separately through the hostel M-Pesa till.
+
+5. Support
+Academic counselling is available through the office of the Registrar. Welfare and student council matters are handled by the Student Council.`,
+      createdBy: 'u_admin2', createdAt: isoAt(-120 * DAY)
+    },
+    {
+      id: 'doc_exam_rules', title: 'Examination regulations — December 2026', category: 'Examinations',
+      summary: 'Reporting times, permitted materials and malpractice rules for the end-of-term examinations.',
+      audience: 'students', campus: ALL_CAMPUSES, body:
+`Reporting time
+Candidates must be seated 15 minutes before each paper. The examination timetable is published on the Timetable & exams page and can be added to a phone calendar.
+
+Permitted materials
+Only a student ID, pen, pencil, ruler and any calculator approved by the unit lecturer may be taken into the hall. Bags and phones must be left at the door.
+
+Malpractice
+Any candidate found with unauthorised material, communicating with another candidate or impersonating a student will have the paper cancelled and the matter referred to the Examinations Board.
+
+Absence
+A candidate who misses a paper through illness must present a medical report to the Examinations Office within 48 hours. Make-up papers are scheduled at the discretion of the Examinations Officer.
+
+Results
+Provisional results are published in the portal. A student may appeal a mark within 14 days of publication through the Registrar.`,
+      createdBy: 'u_exams', createdAt: isoAt(-60 * DAY)
+    },
+    {
+      id: 'doc_fees_policy', title: 'Fee payment and refund policy', category: 'Finance',
+      summary: 'M-Pesa paybill details, verification timelines and the refund process.',
+      audience: 'all', campus: ALL_CAMPUSES, body:
+`Payment channels
+Fees are paid through the official M-Pesa paybill published on the Fees page. The account number is the letter K followed by the student's full name, exactly as it appears on the admission record.
+
+Verification
+After paying, record the M-Pesa code in the portal. The Finance Office verifies each reference within two working days. Only verified payments reduce the fee balance shown on the statement.
+
+Receipts
+Every verified payment has a downloadable PDF receipt on the Fees page. The fee statement lists all invoices and verified payments for the academic year.
+
+Refunds
+Refund applications are made in writing to the Finance Office. Approved refunds are processed within 21 working days to the account or phone number used for payment.
+
+Hostel
+Hostel accommodation is paid separately through the hostel Buy Goods number. Hostel payments are not part of the tuition invoice.`,
+      createdBy: 'u_accounts', createdAt: isoAt(-90 * DAY)
+    },
+    {
+      id: 'doc_attachment', title: 'Clinical attachment guidelines', category: 'Academic',
+      summary: 'Placement requirements, logbook expectations and supervisor sign-off.',
+      audience: 'students', campus: ALL_CAMPUSES, body:
+`Placement
+Clinical attachment is a requirement for all health science programmes. Placements are arranged with the department and approved by the campus principal.
+
+Logbook
+Each student keeps a daily logbook of procedures observed and performed. Entries must be signed by the clinical supervisor at the end of each week.
+
+Assessment
+The attachment is assessed through the logbook (40%), supervisor report (40%) and a short presentation (20%). The mark is recorded alongside unit marks.
+
+Safety
+Students must observe infection prevention measures at all times, including hand hygiene and correct use of protective equipment. Any injury must be reported to the supervisor and the campus office immediately.
+
+Completion
+A signed completion form is submitted to the Registrar before the end-of-term examination.`,
+      createdBy: 'u_principal', createdAt: isoAt(-45 * DAY)
+    }
+  ];
+}
+
 const DB = {
   data: null,
 
@@ -142,6 +231,13 @@ const DB = {
         u.year = Math.ceil(u.semester / 3);
       });
       meta.semesterVersion = 1;
+      this.save();
+    }
+    if (!meta.recordsVersion) {
+      this.data.audit = Array.isArray(this.data.audit) ? this.data.audit : [];
+      this.data.documents = Array.isArray(this.data.documents) ? this.data.documents : seedDocuments();
+      meta.recordsVersion = 1;
+      meta.auditVersion = 1;
       this.save();
     }
     await this.ensureStaffAccounts();
@@ -391,12 +487,20 @@ const DB = {
         rolesVersion: 1,
         marksVersion: 1,
         semesterVersion: 1,
+        recordsVersion: 1,
+        auditVersion: 1,
         nextAdmissionSeq: 13
       },
       users, units: deepCopy(UNITS), registrations, marks, invoices, payments,
       sessions, attendance, assignments, submissions, notices, presence,
       hostelBookings: [
         { id: uid('hb'), studentId: 'u_stu2', hostelId: 'HST', termCode: '2026-T3', status: 'pending', createdAt: isoAt(-2 * DAY) }
+      ],
+      documents: seedDocuments(),
+      audit: [
+        { id: uid('au'), at: isoAt(-2 * DAY), action: 'account.approve', detail: 'Nairobi campus administrator approved 4 student registrations.', actorId: 'u_campus', actorName: 'Campus Administrator — Nairobi', role: 'campus_admin', campus: 'Nairobi' },
+        { id: uid('au'), at: isoAt(-1 * DAY), action: 'payment.verify', detail: 'Verified M-Pesa reference QK84LM92TX for Ksh. 12,000.', actorId: 'u_campus', actorName: 'Campus Administrator — Nairobi', role: 'campus_admin', campus: 'Nairobi' },
+        { id: uid('au'), at: isoAt(-6 * 3600000), action: 'results.publish', detail: 'Published results for PHN103 to registered students.', actorId: 'u_lec1', actorName: 'Lecturer', role: 'lecturer', campus: 'Nairobi' }
       ],
       feedback: []
     };
@@ -531,6 +635,7 @@ const DB = {
       userId: user.id, createdBy: adminId || 'u_owner'
     });
     this.save();
+    this.recordAudit('account.approve', 'Approved ' + user.name + ' as ' + (ROLE_LABELS[user.role] || user.role) + (user.campus && user.campus !== ALL_CAMPUSES ? ' — ' + user.campus : '') + '.', approver);
     return { ok: true };
   },
 
@@ -541,6 +646,7 @@ const DB = {
     user.rejectedAt = isoAt(0);
     user.rejectedBy = adminId || null;
     this.save();
+    this.recordAudit('account.reject', 'Rejected the registration of ' + user.name + '.', this.user(adminId));
   },
 
   setUserStatus(id, status) {
@@ -548,6 +654,7 @@ const DB = {
     if (!user) return;
     user.status = status;
     this.save();
+    this.recordAudit('account.' + (status === 'suspended' ? 'suspend' : 'activate'), (status === 'suspended' ? 'Suspended ' : 'Activated ') + user.name + "'s account.");
   },
 
   canApprove(approver, target) {
@@ -698,6 +805,7 @@ const DB = {
       Object.assign(mark, { cat1, cat2, exam, total, grade: g.grade, points: g.points, updatedAt: now });
     });
     this.save();
+    this.recordAudit('marks.save', 'Saved marks for ' + entries.length + ' student' + (entries.length === 1 ? '' : 's') + ' in ' + unitCode + ' (' + term + ').');
   },
 
   randomizeMarks(unitCode, termCode) {
@@ -744,6 +852,7 @@ const DB = {
       });
     }
     this.save();
+    this.recordAudit(published ? 'results.publish' : 'results.unpublish', (published ? 'Published' : 'Unpublished') + ' ' + unitCode + ' results for ' + marks.length + ' student' + (marks.length === 1 ? '' : 's') + '.', this.user(publisherId));
   },
 
   assignmentsForStudent(userId) {
@@ -784,6 +893,7 @@ const DB = {
     };
     this.data.assignments.push(assignment);
     this.save();
+    this.recordAudit('assignment.create', 'Created "' + assignment.title + '" for ' + assignment.unitCode + ', due ' + fmtDate(assignment.dueAt) + '.', this.user(userId));
     return assignment;
   },
   gradeSubmission(submissionId, score, feedback, graderId) {
@@ -800,6 +910,7 @@ const DB = {
       userId: sub.studentId, createdBy: graderId
     });
     this.save();
+    this.recordAudit('assignment.grade', 'Graded "' + (assignment ? assignment.title : 'assignment') + '" for ' + (this.user(sub.studentId) || {}).name + ': ' + sub.score + '/' + (assignment ? assignment.maxScore : '—') + '.', this.user(graderId));
   },
 
   sessionsForUnit(unitCode) {
@@ -894,6 +1005,8 @@ const DB = {
       userId: p.studentId, createdBy: adminId
     });
     this.save();
+    const student = this.user(p.studentId);
+    this.recordAudit('payment.verify', 'Verified ' + p.method + ' reference ' + p.reference + ' — ' + money(p.amount) + ' for ' + (student ? student.name : 'student') + '.', this.user(adminId));
   },
   rejectPayment(paymentId, adminId) {
     const p = this.data.payments.find(x => x.id === paymentId);
@@ -905,6 +1018,8 @@ const DB = {
       userId: p.studentId, createdBy: adminId
     });
     this.save();
+    const student = this.user(p.studentId);
+    this.recordAudit('payment.reject', 'Rejected ' + p.method + ' reference ' + p.reference + ' — ' + money(p.amount) + ' for ' + (student ? student.name : 'student') + '.', this.user(adminId));
   },
   savePaybills(fees, hostel) {
     this.data.meta.paybills = {
@@ -921,6 +1036,7 @@ const DB = {
     };
     this.data.meta.paybillsVersion = 2;
     this.save();
+    this.recordAudit('finance.paybills', 'Updated the M-Pesa paybill to ' + this.data.meta.paybills.fees.paybill + ' and hostel till to ' + this.data.meta.paybills.hostel.paybill + '.');
   },
   hostelBookingsFor(studentId) { return this.data.hostelBookings.filter(b => b.studentId === studentId); },
   bookHostel(studentId, hostelId) {
@@ -953,6 +1069,8 @@ const DB = {
       userId: booking.studentId, createdBy: adminId
     });
     this.save();
+    const student = this.user(booking.studentId);
+    this.recordAudit('hostel.' + status, (status === 'approved' ? 'Approved' : 'Declined') + ' the hostel booking of ' + (student ? student.name : 'student') + ' for ' + (hostel ? hostel.room : 'accommodation') + '.', this.user(adminId));
   },
 
   feedbackFor(userId) { return this.data.feedback.find(f => f.userId === userId) || null; },
@@ -1007,15 +1125,19 @@ const DB = {
       title: payload.title, message: payload.message, type: 'announcement',
       audience: payload.audience || 'all', campus: payload.campus || '', createdBy: userId, pinned: !!payload.pinned
     });
+    this.recordAudit('notice.create', 'Published the announcement "' + payload.title + '" to ' + audienceLabel(payload.audience || 'all') + '.', this.user(userId));
   },
   deleteNotice(id) {
+    const notice = this.data.notices.find(n => n.id === id);
     this.data.notices = this.data.notices.filter(n => n.id !== id);
     this.save();
+    if (notice) this.recordAudit('notice.delete', 'Deleted the announcement "' + notice.title + '".');
   },
 
   updateMeta(patch) {
     Object.assign(this.data.meta, patch);
     this.save();
+    this.recordAudit('registry.update', 'Updated academic settings — term ' + this.data.meta.termLabel + ' (' + this.data.meta.termCode + '), registration ' + (this.data.meta.registrationOpen ? 'open' : 'closed') + '.');
   },
 
   presenceOf(userId) {
@@ -1115,5 +1237,128 @@ const DB = {
     const units = this.data.units.filter(u => u.current && u.programme === programme);
     const students = this.data.users.filter(u => u.role === 'student' && u.programme === programme && u.status === 'active');
     return { units: units.length, students: students.length };
+  },
+
+  /* ---------------- Audit trail ---------------- */
+
+  recordAudit(action, detail, actorOverride) {
+    if (!this.data) return null;
+    if (!Array.isArray(this.data.audit)) this.data.audit = [];
+    const actor = actorOverride || this.currentUser() || {};
+    const entry = {
+      id: uid('au'), at: isoAt(0), action,
+      detail: String(detail || ''),
+      actorId: actor.id || null,
+      actorName: actor.name || 'System',
+      role: actor.role || 'system',
+      campus: actor.campus || ''
+    };
+    this.data.audit.unshift(entry);
+    if (this.data.audit.length > AUDIT_LIMIT) this.data.audit.length = AUDIT_LIMIT;
+    this.save();
+    return entry;
+  },
+  auditLog(limit) { return (this.data.audit || []).slice(0, limit || 80); },
+
+  /* ---------------- Document vault ---------------- */
+
+  documentCategories() { return DOCUMENT_CATEGORIES.slice(); },
+  document(id) { return (this.data.documents || []).find(d => d.id === id) || null; },
+  documentsFor(user) {
+    const docs = this.data.documents || [];
+    if (!user) return [];
+    if (isStaffRole(user.role)) {
+      return docs.filter(d => user.campus === ALL_CAMPUSES || !d.campus || d.campus === ALL_CAMPUSES || d.campus === user.campus);
+    }
+    return docs.filter(d => d.audience !== 'staff' && (!d.campus || d.campus === ALL_CAMPUSES || d.campus === user.campus));
+  },
+  addDocument(payload, userId) {
+    if (!Array.isArray(this.data.documents)) this.data.documents = [];
+    const doc = {
+      id: uid('doc'),
+      title: String(payload.title || '').trim(),
+      category: DOCUMENT_CATEGORIES.indexOf(payload.category) === -1 ? 'Other' : payload.category,
+      summary: String(payload.summary || '').trim(),
+      body: String(payload.body || ''),
+      filename: payload.filename || '',
+      mime: payload.mime || 'text/plain',
+      size: Number(payload.size) || 0,
+      dataUrl: payload.dataUrl || '',
+      audience: payload.audience === 'students' || payload.audience === 'staff' ? payload.audience : 'all',
+      campus: payload.campus || ALL_CAMPUSES,
+      createdBy: userId || null,
+      createdAt: isoAt(0)
+    };
+    if (!doc.title) return { error: 'title' };
+    this.data.documents.unshift(doc);
+    this.save();
+    this.recordAudit('document.add', 'Added "' + doc.title + '" to the document vault (' + doc.category + ', ' + audienceLabel(doc.audience) + ').');
+    return { ok: true, document: doc };
+  },
+  deleteDocument(id) {
+    const doc = this.document(id);
+    if (!doc) return { error: 'missing' };
+    this.data.documents = this.data.documents.filter(d => d.id !== id);
+    this.save();
+    this.recordAudit('document.delete', 'Removed "' + doc.title + '" from the document vault.');
+    return { ok: true };
+  },
+
+  /* ---------------- Analytics ---------------- */
+
+  averageFor(studentId) {
+    const marks = this.data.marks.filter(m => m.studentId === studentId && m.published);
+    if (!marks.length) return null;
+    return Math.round(marks.reduce((sum, m) => sum + (Number(m.total) || 0), 0) / marks.length);
+  },
+  termLabelFor(termCode) {
+    if (termCode === this.data.meta.termCode) return this.data.meta.termLabel;
+    const unit = this.data.units.find(u => u.termCode === termCode && u.termLabel);
+    return unit ? unit.termLabel : termCode;
+  },
+  passRateTrend(programme) {
+    const codes = this.data.units.filter(u => !programme || u.programme === programme).map(u => u.code);
+    const buckets = {};
+    this.data.marks.filter(m => codes.indexOf(m.unitCode) !== -1).forEach(m => {
+      const term = m.termCode || this.data.meta.termCode;
+      if (!buckets[term]) buckets[term] = { termCode: term, total: 0, passed: 0, sum: 0 };
+      buckets[term].total++;
+      buckets[term].sum += Number(m.total) || 0;
+      if ((Number(m.total) || 0) >= 50) buckets[term].passed++;
+    });
+    return Object.keys(buckets).sort().map(term => {
+      const b = buckets[term];
+      return {
+        termCode: term, termLabel: this.termLabelFor(term),
+        total: b.total, passed: b.passed,
+        rate: b.total ? Math.round(b.passed / b.total * 100) : 0,
+        average: b.total ? Math.round(b.sum / b.total) : 0
+      };
+    });
+  },
+  atRiskStudents(campus) {
+    const students = this.data.users.filter(u => u.role === 'student' && u.status === 'active' &&
+      (!campus || campus === ALL_CAMPUSES || u.campus === campus));
+    return students.map(s => {
+      const attendance = this.overallAttendance(s.id);
+      const average = this.averageFor(s.id);
+      const failed = this.data.marks.filter(m => m.studentId === s.id && m.published && (Number(m.total) || 0) < 40).length;
+      const reasons = [];
+      if (attendance.held && attendance.percent < 75) reasons.push('Attendance ' + attendance.percent + '%');
+      if (average !== null && average < 50) reasons.push('Average ' + average + '%');
+      if (failed) reasons.push(failed + ' failed unit' + (failed === 1 ? '' : 's'));
+      return { student: s, attendance: attendance.percent, average, failed, reasons };
+    }).filter(r => r.reasons.length).sort((a, b) => (a.average === null ? 100 : a.average) - (b.average === null ? 100 : b.average) || a.attendance - b.attendance);
+  },
+  lecturerWorkload() {
+    return this.data.users.filter(u => u.role === 'lecturer' && u.status === 'active').map(l => {
+      const units = this.data.units.filter(u => u.current && u.lecturer === l.id);
+      const codes = units.map(u => u.code);
+      const students = new Set(this.data.registrations.filter(r => codes.indexOf(r.unitCode) !== -1 && r.termCode === this.data.meta.termCode).map(r => r.studentId));
+      const assignmentIds = this.data.assignments.filter(a => codes.indexOf(a.unitCode) !== -1).map(a => a.id);
+      const ungraded = this.data.submissions.filter(s => assignmentIds.indexOf(s.assignmentId) !== -1 && s.score === null).length;
+      const sessions = this.data.sessions.filter(s => codes.indexOf(s.unitCode) !== -1).length;
+      return { id: l.id, name: l.name, campus: l.campus, units: units.length, unitList: codes, students: students.size, ungraded, sessions };
+    }).sort((a, b) => b.students - a.students);
   }
 };

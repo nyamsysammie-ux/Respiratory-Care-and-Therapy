@@ -1,19 +1,19 @@
 /* TSMHST Portal — routing, interactions, settings, permissions and PWA */
 const ACCESS = {
-  student: ['home', 'units', 'assignments', 'results', 'transcript', 'attendance', 'timetable', 'fees', 'hostel', 'team', 'about', 'settings', 'notifications'],
-  lecturer: ['home', 'units', 'assignments', 'marks', 'attendance', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  student: ['home', 'units', 'assignments', 'results', 'transcript', 'attendance', 'timetable', 'fees', 'hostel', 'documents', 'team', 'about', 'settings', 'notifications'],
+  lecturer: ['home', 'units', 'assignments', 'marks', 'attendance', 'timetable', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
   owner: ['settings'],
-  director: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  deputy_director: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  general_admin: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  principal: ['home', 'approvals', 'users', 'payments', 'academics', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  campus_admin: ['home', 'approvals', 'users', 'payments', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  registrar: ['home', 'academics', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  exam_officer: ['home', 'marks', 'academics', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  qa_officer: ['home', 'quality', 'campuses', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  accounts_clerk: ['home', 'finance', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  secretary: ['home', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  council: ['home', 'announcements', 'team', 'about', 'settings', 'notifications']
+  director: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'timetable', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  deputy_director: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'timetable', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  general_admin: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'timetable', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  principal: ['home', 'approvals', 'users', 'payments', 'academics', 'timetable', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  campus_admin: ['home', 'approvals', 'users', 'payments', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  registrar: ['home', 'academics', 'timetable', 'users', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  exam_officer: ['home', 'marks', 'academics', 'timetable', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  qa_officer: ['home', 'quality', 'campuses', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  accounts_clerk: ['home', 'finance', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  secretary: ['home', 'announcements', 'users', 'documents', 'team', 'about', 'settings', 'notifications'],
+  council: ['home', 'announcements', 'documents', 'team', 'about', 'settings', 'notifications']
 };
 
 let deferredInstallPrompt = null;
@@ -84,6 +84,8 @@ function render() {
     return;
   }
   const route = currentRoute(user);
+  const codeMatch = location.hash.match(/[?&]code=(\d{6})/);
+  if (codeMatch) PORTAL_STATE.attendance.code = codeMatch[1];
   if (location.hash !== '#/' + route) history.replaceState(null, '', '#/' + route);
   applyPreferences(user);
   if (route === 'notifications') { DB.markNoticesRead(); lastUnread = 0; }
@@ -167,6 +169,11 @@ function bindGlobalEvents() {
         render();
         return;
       }
+      if (t.id === 'doc-category') {
+        PORTAL_STATE.documents.category = t.value;
+        render();
+        return;
+      }
     } catch (err) {
       console.error(err);
       toast('Could not apply that change.', 'error');
@@ -225,9 +232,13 @@ async function handleAction(action, el, event) {
       document.body.classList.add('more-open');
       const sheet = document.getElementById('more-sheet');
       if (sheet) sheet.setAttribute('aria-hidden', 'false');
+      document.querySelectorAll('[data-action="open-more"]').forEach(b => b.setAttribute('aria-expanded', 'true'));
       return;
     case 'close-more':
       document.body.classList.remove('more-open');
+      const closedSheet = document.getElementById('more-sheet');
+      if (closedSheet) closedSheet.setAttribute('aria-hidden', 'true');
+      document.querySelectorAll('[data-action="open-more"]').forEach(b => b.setAttribute('aria-expanded', 'false'));
       return;
     case 'auth-tab':
       switchAuthTab(el.dataset.tab);
@@ -495,6 +506,62 @@ async function handleAction(action, el, event) {
       if (!user) return;
       downloadExamICS(user);
       return;
+    case 'fee-statement':
+      if (!user || user.role !== 'student') return;
+      buildStatementPDF(user);
+      toast('Fee statement downloaded.', 'success');
+      return;
+    case 'payment-receipt': {
+      if (!user) return;
+      const payment = DB.data.payments.find(p => p.id === el.dataset.payment);
+      if (!payment) return;
+      const student = DB.user(payment.studentId);
+      if (!student) return;
+      if (user.role === 'student' && payment.studentId !== user.id) return;
+      if (user.role !== 'student' && !isStaffRole(user.role)) return;
+      buildReceiptPDF(student, payment);
+      toast('Receipt downloaded.', 'success');
+      return;
+    }
+    case 'document-upload':
+      openDocumentModal();
+      return;
+    case 'document-open':
+      openDocumentRecord(el.dataset.document);
+      return;
+    case 'document-download':
+      downloadDocumentRecord(el.dataset.document);
+      return;
+    case 'document-delete': {
+      if (!user || !isStaffRole(user.role)) return;
+      const doc = DB.document(el.dataset.document);
+      if (!doc) return;
+      const ok = await confirmDialog({ title: 'Remove document', message: `Remove "${doc.title}" from the vault for everyone?`, confirmText: 'Remove', danger: true });
+      if (!ok) return;
+      DB.deleteDocument(doc.id);
+      closeModal();
+      toast('Document removed from the vault.', 'info');
+      render();
+      return;
+    }
+    case 'session-qr': {
+      const session = DB.data.sessions.find(s => s.id === el.dataset.session);
+      if (!session) return;
+      openSessionQr(session);
+      return;
+    }
+    case 'marks-export':
+      exportMarksCSV(user);
+      return;
+    case 'marks-import':
+      openMarksImportModal(user);
+      return;
+    case 'users-export':
+      exportUsersCSV(user);
+      return;
+    case 'payments-export':
+      exportPaymentsCSV(user);
+      return;
     case 'print':
       window.print();
       return;
@@ -561,7 +628,7 @@ async function handleSignin(form) {
   }
   lastUnread = DB.unreadCount(result.user);
   PORTAL_STATE.marks = { unitCode: null, sort: 'admission', order: null };
-  PORTAL_STATE.attendance = { unitCode: null };
+  PORTAL_STATE.attendance = { unitCode: null, code: '' };
   PORTAL_STATE.timetable = { tab: 'classes', programme: 'all' };
   toast('Welcome, ' + result.user.name.split(' ')[0] + '.', 'success');
   if (location.hash === '#/home') render(); else location.hash = '#/home';
@@ -1062,6 +1129,7 @@ async function handleSubmit(form) {
       already: 'You have already signed in for this session.'
     };
     if (result.error) { toast(errors[result.error] || 'Sign-in failed.', 'error'); return; }
+    PORTAL_STATE.attendance.code = '';
     toast('Signed in for ' + result.session.unitCode + '. Attendance recorded.', 'success');
     render();
     return;
@@ -1119,6 +1187,40 @@ async function handleSubmit(form) {
     toast('Announcement published.', 'success');
     closeModal();
     render();
+    return;
+  }
+
+  if (kind === 'new-document') {
+    if (!user || !isStaffRole(user.role)) return;
+    const file = form.querySelector('input[type="file"]');
+    const attachment = file && file.files[0];
+    const payload = {
+      title: String(fd.get('title') || '').trim(),
+      category: String(fd.get('category') || 'Other'),
+      summary: String(fd.get('summary') || '').trim(),
+      body: String(fd.get('body') || '').trim(),
+      audience: String(fd.get('audience') || 'all'),
+      campus: String(fd.get('campus') || ALL_CAMPUSES)
+    };
+    if (!payload.title) { toast('Enter a title for the document.', 'error'); return; }
+    if (attachment) {
+      if (attachment.size > 800 * 1024) { toast('Attachments must be 800 KB or smaller.', 'error'); return; }
+      payload.filename = attachment.name;
+      payload.mime = attachment.type || 'application/octet-stream';
+      payload.size = attachment.size;
+      payload.dataUrl = await readFileAsDataURL(attachment);
+    }
+    if (!payload.body && !payload.dataUrl) { toast('Add body text or attach a file.', 'error'); return; }
+    const result = DB.addDocument(payload, user.id);
+    if (result.error) { toast('Enter a title for the document.', 'error'); return; }
+    closeModal();
+    render();
+    toast('Document added to the vault.', 'success');
+    return;
+  }
+
+  if (kind === 'import-marks') {
+    await importMarksCSV(form);
     return;
   }
 
@@ -1202,6 +1304,190 @@ function filterCourses() {
     group.hidden = visible === 0;
     if (q) group.open = true;
   });
+}
+
+/* ---------------- Document vault ---------------- */
+
+function dateStamp() { return new Date().toISOString().slice(0, 10); }
+
+function readFileAsDataURL(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ''));
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+function openDocumentModal() {
+  const user = DB.currentUser();
+  if (!user || !isStaffRole(user.role)) return;
+  const campuses = user.campus === ALL_CAMPUSES ? [ALL_CAMPUSES].concat(CAMPUSES) : [user.campus];
+  modal('Add document', `<form data-form="new-document" class="form-grid">
+    <label class="field form-span"><span>Title</span><input name="title" required maxlength="90" placeholder="e.g. Examination regulations"></label>
+    <label class="field"><span>Category</span><select name="category">${DB.documentCategories().map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
+    <label class="field"><span>Audience</span><select name="audience"><option value="all">Everyone</option><option value="students">Students</option><option value="staff">Staff</option></select></label>
+    <label class="field form-span"><span>Campus</span><select name="campus">${campuses.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></label>
+    <label class="field form-span"><span>Summary</span><input name="summary" maxlength="130" placeholder="One line shown on the document card"></label>
+    <label class="field form-span"><span>Body text (optional when you attach a file)</span><textarea name="body" rows="5" placeholder="Paste the policy or notice text. Blank lines become paragraphs."></textarea></label>
+    <label class="field form-span"><span>Attach a file (optional, max 800 KB)</span><input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.doc,.docx"></label>
+    <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('file')} Add to vault</button></div>
+  </form><p class="demo-note">${icon('info')} Documents are saved on this device so students can read them offline. Large attachments fill the offline cache quickly.</p>`);
+}
+
+function openDocumentRecord(id) {
+  const doc = DB.document(id);
+  if (!doc) return;
+  const body = doc.dataUrl
+    ? (doc.mime && doc.mime.indexOf('image/') === 0
+      ? `<img class="doc-preview" src="${doc.dataUrl}" alt="${esc(doc.title)}">`
+      : `<p class="muted-text">This file is stored in the vault. Use Download to open it on your device.</p>`)
+    : `<div class="doc-body">${String(doc.body || '').split(/\n{2,}/).map(p => `<p>${esc(p)}</p>`).join('')}</div>`;
+  modal(doc.title, `<p class="modal-lead">${esc(doc.category)} · ${esc(fmtDate(doc.createdAt))} · ${esc(documentSizeLabel(doc))}</p>
+    ${doc.summary ? `<p>${esc(doc.summary)}</p>` : ''}
+    ${body}
+    <div class="modal-actions"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Close'))}</button><button type="button" class="btn btn-primary" data-action="document-download" data-document="${doc.id}">${icon('download')} ${doc.dataUrl ? 'Download file' : 'Download PDF'}</button></div>`, { size: 'lg' });
+}
+
+function downloadDocumentRecord(id) {
+  const doc = DB.document(id);
+  if (!doc) return;
+  if (doc.dataUrl) {
+    const link = document.createElement('a');
+    link.href = doc.dataUrl;
+    link.download = doc.filename || doc.title;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    return;
+  }
+  downloadVaultDocument(doc);
+}
+
+/* ---------------- CSV export & import ---------------- */
+
+function exportUsersCSV(user) {
+  if (!user || !canApproveAccounts(user)) return;
+  const scope = user.role === 'campus_admin' ? user.campus : (isExecRole(user.role) ? ALL_CAMPUSES : user.campus);
+  const users = DB.usersForCampus(scope).slice().sort((a, b) => a.name.localeCompare(b.name));
+  downloadCSV('TSMHST-users-' + dateStamp() + '.csv',
+    ['Name', 'Role', 'Email', 'Phone', 'Admission no.', 'Staff no.', 'Programme', 'Semester', 'Campus', 'Status', 'Created'],
+    users.map(u => [
+      u.name, roleLabel(u.role), u.email, u.phone || '', u.admissionNo || '', u.staffNo || '',
+      u.programme ? programmeFor(u.programme).code : '', u.semester || '', u.campus || '', u.status, fmtDate(u.createdAt)
+    ]));
+  toast(users.length + ' accounts exported to CSV.', 'success');
+}
+
+function exportPaymentsCSV(user) {
+  if (!user || !(canVerifyPayments(user) || isExecRole(user.role) || user.role === 'accounts_clerk')) return;
+  const scope = (user.role === 'campus_admin' || user.role === 'principal') ? user.campus : ALL_CAMPUSES;
+  const payments = DB.paymentsForCampus(scope).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  downloadCSV('TSMHST-payments-' + dateStamp() + '.csv',
+    ['Date', 'Student', 'Admission no.', 'Campus', 'Amount (Ksh.)', 'Method', 'Reference', 'Status', 'Verified on'],
+    payments.map(p => {
+      const s = DB.user(p.studentId) || {};
+      return [fmtDate(p.createdAt, true), s.name || '', s.admissionNo || '', s.campus || '', p.amount, p.method, p.reference, p.status, p.verifiedAt ? fmtDate(p.verifiedAt, true) : ''];
+    }));
+  toast(payments.length + ' payments exported to CSV.', 'success');
+}
+
+function exportMarksCSV(user) {
+  if (!user || !canManageMarks(user)) return;
+  const unit = currentMarksUnit(user);
+  if (!unit) return;
+  const marks = DB.marksForUnit(unit.code, DB.data.meta.termCode);
+  const map = {};
+  marks.forEach(m => { map[m.studentId] = m; });
+  const students = DB.studentsForUnit(unit.code, DB.data.meta.termCode).slice().sort((a, b) => String(a.admissionNo).localeCompare(String(b.admissionNo)));
+  downloadCSV('TSMHST-marks-' + unit.code + '-' + dateBaseTerm() + '.csv',
+    ['Admission no.', 'Name', 'CAT 1 (/30)', 'CAT 2 (/30)', 'Exam (/70)', 'Total', 'Grade', 'Published'],
+    students.map(s => {
+      const m = map[s.id] || {};
+      return [s.admissionNo || '', s.name, m.cat1 !== undefined ? m.cat1 : '', m.cat2 !== undefined ? m.cat2 : '', m.exam !== undefined ? m.exam : '', m.total !== undefined ? m.total : '', m.grade || '', m.published ? 'Yes' : 'No'];
+    }));
+  toast('Marks exported for ' + unit.code + '.', 'success');
+}
+
+function dateBaseTerm() { return DB.data.meta.termCode || dateStamp(); }
+
+function openMarksImportModal() {
+  const user = DB.currentUser();
+  if (!user || !canManageMarks(user)) return;
+  const unit = currentMarksUnit(user);
+  if (!unit) return;
+  modal('Import marks — ' + unit.code, `<form data-form="import-marks" data-unit="${unit.code}">
+    <p class="modal-lead">Upload a CSV with the columns <strong>Admission no.</strong>, <strong>CAT 1</strong>, <strong>CAT 2</strong> and <strong>Exam</strong>. Export the current sheet first to get the correct format.</p>
+    <label class="field"><span>CSV file</span><input type="file" name="file" accept=".csv,text/csv" required></label>
+    <label class="checkline"><input type="checkbox" name="overwrite" checked> <span>Overwrite existing marks for matching students</span></label>
+    <div class="modal-actions"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('file')} Import marks</button></div>
+  </form>`);
+}
+
+async function importMarksCSV(form) {
+  const user = DB.currentUser();
+  if (!user || !canManageMarks(user)) return;
+  const unitCode = form.dataset.unit;
+  const unit = DB.unit(unitCode);
+  if (!unit) return;
+  const fileInput = form.querySelector('input[type="file"]');
+  const file = fileInput && fileInput.files[0];
+  if (!file) { toast('Choose a CSV file first.', 'error'); return; }
+  if (file.size > 400 * 1024) { toast('That CSV is too large. Keep imports under 400 KB.', 'error'); return; }
+  const text = await file.text();
+  const rows = parseCSV(text);
+  if (rows.length < 2) { toast('The CSV does not contain any data rows.', 'error'); return; }
+  const header = rows[0].map(h => String(h).trim().toLowerCase());
+  const find = names => header.findIndex(h => names.some(n => h.indexOf(n) !== -1));
+  const iAdm = find(['admission']);
+  const iCat1 = find(['cat 1', 'cat1']);
+  const iCat2 = find(['cat 2', 'cat2']);
+  const iExam = find(['exam']);
+  if (iAdm === -1 || iCat1 === -1 || iCat2 === -1 || iExam === -1) {
+    toast('The CSV needs Admission no., CAT 1, CAT 2 and Exam columns.', 'error');
+    return;
+  }
+  const students = DB.studentsForUnit(unitCode, DB.data.meta.termCode);
+  const overwriteInput = form.querySelector('input[name="overwrite"]');
+  const overwrite = !overwriteInput || overwriteInput.checked;
+  const existing = overwrite ? null : new Set(DB.marksForUnit(unitCode, DB.data.meta.termCode).map(m => m.studentId));
+  const entries = [];
+  const skipped = [];
+  let kept = 0;
+  rows.slice(1).forEach(row => {
+    const admission = String(row[iAdm] || '').trim().toUpperCase();
+    const student = students.find(s => String(s.admissionNo || '').toUpperCase() === admission);
+    if (!student) { if (admission) skipped.push(admission); return; }
+    if (existing && existing.has(student.id)) { kept++; return; }
+    const cat1 = Number(row[iCat1]);
+    const cat2 = Number(row[iCat2]);
+    const exam = Number(row[iExam]);
+    if (!Number.isFinite(cat1) || !Number.isFinite(cat2) || !Number.isFinite(exam)) { skipped.push(admission); return; }
+    entries.push({ studentId: student.id, cat1, cat2, exam });
+  });
+  if (!entries.length) { toast(kept ? 'All matching students already have marks. Tick overwrite to replace them.' : 'No rows matched students registered for ' + unitCode + '.', 'error'); return; }
+  DB.saveMarks(unitCode, entries, DB.data.meta.termCode);
+  DB.recordAudit('marks.import', 'Imported ' + entries.length + ' mark record' + (entries.length === 1 ? '' : 's') + ' into ' + unitCode + ' from ' + file.name + '.');
+  closeModal();
+  render();
+  const notes = [];
+  if (skipped.length) notes.push(skipped.length + ' row(s) skipped');
+  if (kept) notes.push(kept + ' existing record(s) kept');
+  toast(entries.length + ' record' + (entries.length === 1 ? '' : 's') + ' imported' + (notes.length ? ' — ' + notes.join(', ') : '') + '.', skipped.length ? 'info' : 'success');
+}
+
+/* ---------------- QR attendance ---------------- */
+
+function openSessionQr(session) {
+  const unit = DB.unit(session.unitCode);
+  const link = attendanceDeepLink(session.code);
+  modal('Class sign-in QR', `<div class="qr-sheet">
+    <p class="qr-sheet-code">${esc(session.code)}</p>
+    <div class="qr-sheet-image">${qrSvg(link, 7)}</div>
+    <p class="qr-sheet-title">${esc(session.unitCode)} · ${esc(unit ? unit.title : 'Class session')}</p>
+    <p class="muted-text">Students scan this code with their phone camera, or open the portal and enter <strong>${esc(session.code)}</strong>. The session closes at ${esc(new Date(session.closesAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))}.</p>
+    <div class="inline-actions center"><button type="button" class="btn btn-ghost btn-sm" data-action="copy" data-copy="${esc(session.code)}">${icon('copy')} Copy code</button><button type="button" class="btn btn-ghost btn-sm" data-action="copy" data-copy="${esc(link)}">${icon('copy')} Copy link</button><button type="button" class="btn btn-ghost btn-sm" data-action="print">${icon('print')} Print</button></div>
+  </div>`, { size: 'md' });
 }
 
 /* ---------------- Calendar export ---------------- */

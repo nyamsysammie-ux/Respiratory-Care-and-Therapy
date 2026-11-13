@@ -259,3 +259,269 @@ function switchControl(name, checked, attrs) {
 function detailRow(label, value) {
   return `<div class="detail-row"><span>${esc(label)}</span><strong>${value}</strong></div>`;
 }
+
+/* ---------------- Downloads, CSV and QR ---------------- */
+
+function downloadBlob(blob, filename) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 5000);
+}
+
+function csvCell(value) {
+  const text = String(value === undefined || value === null ? '' : value);
+  return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
+}
+
+function toCSV(headers, rows) {
+  return [headers].concat(rows).map(row => row.map(csvCell).join(',')).join('\r\n');
+}
+
+function downloadCSV(filename, headers, rows) {
+  downloadBlob(new Blob(['\ufeff' + toCSV(headers, rows)], { type: 'text/csv;charset=utf-8' }), filename);
+}
+
+/* Small RFC 4180 reader: handles quoted cells, doubled quotes and CRLF. */
+function parseCSV(text) {
+  const rows = [];
+  let row = [];
+  let cell = '';
+  let quoted = false;
+  const source = String(text || '').replace(/\r\n?/g, '\n');
+  for (let i = 0; i < source.length; i++) {
+    const ch = source[i];
+    if (quoted) {
+      if (ch === '"' && source[i + 1] === '"') { cell += '"'; i++; }
+      else if (ch === '"') quoted = false;
+      else cell += ch;
+    } else if (ch === '"') quoted = true;
+    else if (ch === ',') { row.push(cell); cell = ''; }
+    else if (ch === '\n') { row.push(cell); rows.push(row); row = []; cell = ''; }
+    else cell += ch;
+  }
+  if (cell.length || row.length) { row.push(cell); rows.push(row); }
+  return rows.filter(r => r.some(c => String(c).trim() !== ''));
+}
+
+function qrSvg(text, cellSize) {
+  if (typeof qrcode !== 'function') return '';
+  try {
+    const qr = qrcode(0, 'M');
+    qr.addData(String(text));
+    qr.make();
+    return qr.createSvgTag({ cellSize: cellSize || 4, margin: 2, scalable: true, alt: 'QR code' });
+  } catch (e) { return ''; }
+}
+
+/* ---------------- Minimal PDF writer ----------------
+   Produces a single-document PDF 1.4 file with Helvetica text, rules,
+   tinted rows and tables. Text is sanitised to ASCII so string length
+   equals byte length and the xref offsets stay exact. */
+
+const PDF_METRICS = { width: 595, height: 842, margin: 44 };
+
+function pdfASCII(value) {
+  return String(value === undefined || value === null ? '' : value)
+    .replace(/[\u2018\u2019]/g, "'").replace(/[\u201c\u201d]/g, '"')
+    .replace(/[\u2013\u2014]/g, '-').replace(/\u2022/g, '-')
+    .replace(/[^\x20-\x7E]/g, ' ');
+}
+
+function pdfEscape(value) {
+  return pdfASCII(value).replace(/\\/g, '\\\\').replace(/\(/g, '\\(').replace(/\)/g, '\\)');
+}
+
+function pdfWidth(text, size, bold) {
+  const narrow = '. , : ; \' |';
+  const wide = 'ABCDEFGHJKLMNOPQRSTUVWXYZ@%&#';
+  let units = 0;
+  for (const ch of pdfASCII(text)) {
+    if (narrow.indexOf(ch) !== -1) units += 0.28;
+    else if (ch === ' ') units += 0.28;
+    else if ('0123456789'.indexOf(ch) !== -1) units += 0.556;
+    else if (wide.indexOf(ch) !== -1) units += 0.66;
+    else if (ch === 'm' || ch === 'w') units += 0.8;
+    else if (ch === 'i' || ch === 'j' || ch === 'l' || ch === 't' || ch === 'f' || ch === 'r') units += 0.33;
+    else units += 0.52;
+  }
+  return units * size * (bold ? 1.06 : 1);
+}
+
+function pdfClip(text, maxWidth, size, bold) {
+  let out = pdfASCII(text);
+  if (pdfWidth(out, size, bold) <= maxWidth) return out;
+  while (out.length > 1 && pdfWidth(out + '...', size, bold) > maxWidth) out = out.slice(0, -1);
+  return out + '...';
+}
+
+function pdfDocument(opts) {
+  opts = opts || {};
+  const W = PDF_METRICS.width, H = PDF_METRICS.height, M = PDF_METRICS.margin;
+  const pages = [];
+  let ops = [];
+  let y = 0;
+  const num = v => (Math.round(Number(v) * 100) / 100).toString();
+  const rgb = c => c.map(v => num(v)).join(' ');
+
+  function startPage() { ops = []; pages.push(ops); y = H - M; }
+  function ensure(needed) { if (y - needed < M + 34) startPage(); }
+  function draw(text, x, baseline, size, bold, color) {
+    ops.push(`BT /${bold ? 'F2' : 'F1'} ${num(size)} Tf ${rgb(color || [0.13, 0.15, 0.11])} rg 1 0 0 1 ${num(x)} ${num(baseline)} Tm (${pdfEscape(text)}) Tj ET`);
+  }
+  startPage();
+
+  const doc = {
+    width: W,
+    margin: M,
+    cursor() { return y; },
+    newPage() { startPage(); return doc; },
+    space(amount) { y -= Number(amount) || 0; return doc; },
+    text(value, o) {
+      o = o || {};
+      const size = o.size || 10;
+      const bold = !!o.bold;
+      const lineH = size * 1.5;
+      const color = o.color || [0.13, 0.15, 0.11];
+      const maxW = o.width || (W - M * 2);
+      let lines = String(pdfASCII(value)).split('\n');
+      if (o.wrap) {
+        lines = lines.reduce((all, line) => {
+          const words = line.split(/\s+/);
+          let current = '';
+          words.forEach(word => {
+            const next = current ? current + ' ' + word : word;
+            if (pdfWidth(next, size, bold) > maxW && current) { all.push(current); current = word; }
+            else current = next;
+          });
+          all.push(current);
+          return all;
+        }, []);
+      }
+      lines.forEach(line => {
+        ensure(lineH);
+        let x = o.x !== undefined ? o.x : M;
+        const width = pdfWidth(line, size, bold);
+        if (o.align === 'right') x = (o.x !== undefined ? o.x : W - M) - width;
+        else if (o.align === 'center') x = (o.x !== undefined ? o.x : W / 2) - width / 2;
+        draw(line, x, y - size, size, bold, color);
+        y -= lineH;
+      });
+      if (o.gap) y -= o.gap;
+      return doc;
+    },
+    rule(o) {
+      o = o || {};
+      ensure(14);
+      const lineY = y - (o.offset || 3);
+      ops.push(`${rgb(o.color || [0.83, 0.84, 0.8])} RG ${num(o.weight || 0.8)} w ${M} ${num(lineY)} m ${W - M} ${num(lineY)} l S`);
+      y = lineY - (o.after || 10);
+      return doc;
+    },
+    band(columns, values, o) {
+      o = o || {};
+      const size = o.size || 9;
+      const height = o.height || 24;
+      ensure(height + 4);
+      const totalW = W - M * 2;
+      const labelSize = Math.max(6.5, size - 2.5);
+      ops.push(`${rgb(o.fill || [0.97, 0.96, 0.93])} rg ${M} ${num(y - height)} ${num(totalW)} ${num(height)} re f`);
+      let x = M;
+      columns.forEach((col, i) => {
+        const cw = totalW * col.width;
+        const label = pdfClip(col.label || '', cw - 12, labelSize, false);
+        const value = pdfClip(values[i] === undefined ? '' : values[i], cw - 12, size, true);
+        const lw = pdfWidth(label, labelSize, false);
+        const vw = pdfWidth(value, size, true);
+        const lx = col.align === 'right' ? x + cw - 6 - lw : x + 6;
+        const vx = col.align === 'right' ? x + cw - 6 - vw : x + 6;
+        draw(label, lx, y - labelSize - 4, labelSize, false, [0.42, 0.44, 0.4]);
+        draw(value, vx, y - labelSize - 5 - size * 0.72, size, true, o.color || [0.13, 0.15, 0.11]);
+        x += cw;
+      });
+      y -= height;
+      return doc;
+    },
+    table(columns, rows, o) {
+      o = o || {};
+      const size = o.size || 8.5;
+      const rowH = o.rowHeight || size * 2.2;
+      const totalW = W - M * 2;
+      ensure(rowH * 2);
+      ops.push(`${rgb([0.42, 0.12, 0.16])} rg ${M} ${num(y - rowH)} ${num(totalW)} ${num(rowH)} re f`);
+      let x = M;
+      columns.forEach(col => {
+        const cw = totalW * col.width;
+        const label = pdfClip(col.label, cw - 12, size, true);
+        const width = pdfWidth(label, size, true);
+        const tx = col.align === 'right' ? x + cw - 6 - width : x + 6;
+        draw(label, tx, y - rowH + size * 0.78, size, true, [1, 1, 1]);
+        x += cw;
+      });
+      y -= rowH;
+      rows.forEach((row, index) => {
+        ensure(rowH);
+        if (index % 2 === 1) ops.push(`${rgb([0.968, 0.968, 0.955])} rg ${M} ${num(y - rowH)} ${num(totalW)} ${num(rowH)} re f`);
+        let cx = M;
+        columns.forEach((col, ci) => {
+          const cw = totalW * col.width;
+          const bold = !!col.bold;
+          const value = pdfClip(row[ci] === undefined ? '' : row[ci], cw - 12, size, bold);
+          const width = pdfWidth(value, size, bold);
+          const tx = col.align === 'right' ? cx + cw - 6 - width : cx + 6;
+          draw(value, tx, y - rowH + size * 0.72, size, bold, col.tone || [0.13, 0.15, 0.11]);
+          cx += cw;
+        });
+        y -= rowH;
+      });
+      y -= 8;
+      return doc;
+    },
+    build() {
+      const footerText = pdfASCII(opts.footer || '');
+      pages.forEach((page, i) => {
+        page.push(`${rgb([0.78, 0.78, 0.75])} RG 0.6 w ${M} ${M - 4} m ${W - M} ${M - 4} l S`);
+        page.push(`BT /F1 7.5 Tf ${rgb([0.45, 0.46, 0.43])} rg 1 0 0 1 ${M} ${M - 17} Tm (${pdfEscape(footerText)}) Tj ET`);
+        const label = 'Page ' + (i + 1) + ' of ' + pages.length;
+        const width = pdfWidth(label, 7.5, false);
+        page.push(`BT /F1 7.5 Tf ${rgb([0.45, 0.46, 0.43])} rg 1 0 0 1 ${num(W - M - width)} ${M - 17} Tm (${pdfEscape(label)}) Tj ET`);
+      });
+      const streams = pages.map(page => page.join('\n'));
+      const pageIds = streams.map((_, i) => 5 + i * 2);
+      let out = '%PDF-1.4\n';
+      const offsets = [];
+      const put = (id, body) => { offsets[id] = out.length; out += id + ' 0 obj\n' + body + '\nendobj\n'; };
+      put(1, '<< /Type /Catalog /Pages 2 0 R >>');
+      put(2, `<< /Type /Pages /Kids [${pageIds.map(id => id + ' 0 R').join(' ')}] /Count ${pageIds.length} >>`);
+      put(3, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>');
+      put(4, '<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>');
+      streams.forEach((stream, i) => {
+        const pageId = pageIds[i];
+        put(pageId, `<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${W} ${H}] /Resources << /Font << /F1 3 0 R /F2 4 0 R >> >> /Contents ${pageId + 1} 0 R >>`);
+        put(pageId + 1, `<< /Length ${stream.length} >>\nstream\n${stream}\nendstream`);
+      });
+      const maxId = 4 + streams.length * 2;
+      const startxref = out.length;
+      out += `xref\n0 ${maxId + 1}\n0000000000 65535 f \n`;
+      for (let id = 1; id <= maxId; id++) out += String(offsets[id]).padStart(10, '0') + ' 00000 n \n';
+      out += `trailer\n<< /Size ${maxId + 1} /Root 1 0 R >>\nstartxref\n${startxref}\n%%EOF`;
+      return new Blob([out], { type: 'application/pdf' });
+    }
+  };
+  return doc;
+}
+
+/* Branded letterhead shared by receipts and statements. */
+function pdfLetterhead(doc, title, subtitle) {
+  doc.text('TRICENT SCHOOL OF MEDICAL HEALTH SCIENCE AND TECHNOLOGY', { size: 8.5, bold: true, color: [0.25, 0.55, 0.12] });
+  doc.text('TSMHST Portal  |  ' + APP.domain + '  |  ' + APP.officePhoneDisplay, { size: 8, color: [0.42, 0.44, 0.4] });
+  doc.space(6);
+  doc.text(title, { size: 19, bold: true, color: [0.42, 0.12, 0.16] });
+  if (subtitle) doc.text(subtitle, { size: 9.5, color: [0.35, 0.37, 0.33] });
+  doc.rule({ after: 14 });
+  return doc;
+}

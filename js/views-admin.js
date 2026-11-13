@@ -39,7 +39,9 @@ function renderMarks(user) {
   return `${pageHead(I18N.t('Marks studio'), `${esc(selected.code)} · ${esc(selected.title)} · ${esc(programme.name)}`,
     readOnly
       ? `<span class="chip chip-soft">${icon('eye')} Directorate oversight · read only</span>`
-      : `<button type="button" class="btn btn-ghost btn-sm" data-action="marks-randomize">${icon('sparkles')} ${esc(I18N.t('Randomize marks'))}</button>
+      : `<button type="button" class="btn btn-ghost btn-sm" data-action="marks-export">${icon('download')} CSV</button>
+     <button type="button" class="btn btn-ghost btn-sm" data-action="marks-import">${icon('file')} Import CSV</button>
+     <button type="button" class="btn btn-ghost btn-sm" data-action="marks-randomize">${icon('sparkles')} ${esc(I18N.t('Randomize marks'))}</button>
      <button type="button" class="btn btn-primary btn-sm" data-action="marks-save">${icon('check')} ${esc(I18N.t('Save marks'))}</button>`)}
   <div class="status-banner ${allPublished ? 'open' : 'closed'}">
     <div class="status-banner-icon">${icon(allPublished ? 'checkCircle' : 'marks')}</div>
@@ -385,7 +387,7 @@ function renderUsers(user) {
   const counts = { all: users.length, student: 0, lecturer: 0, council: 0, admin: 0 };
   users.forEach(u => { if (u.role === 'student') counts.student++; else if (u.role === 'lecturer') counts.lecturer++; else if (u.role === 'council') counts.council++; else if (isAdminRole(u.role)) counts.admin++; });
   return `${pageHead(I18N.t('Users'), scope === ALL_CAMPUSES ? 'All portal accounts across every campus' : `Portal accounts at ${scope} campus`,
-    `<a class="btn btn-ghost btn-sm" href="#/approvals">${icon('approvals')} ${esc(I18N.t('Approvals'))}</a>`)}
+    `<button type="button" class="btn btn-ghost btn-sm" data-action="users-export">${icon('download')} Export CSV</button><a class="btn btn-ghost btn-sm" href="#/approvals">${icon('approvals')} ${esc(I18N.t('Approvals'))}</a>`)}
   <div class="toolbar">
     <label class="search-field">${icon('search')}<input id="users-search" type="search" placeholder="Search name, email or number" aria-label="Search users"></label>
     <div class="filter-row" data-user-filters>
@@ -418,7 +420,7 @@ function renderFinance(user) {
   const pending = DB.recentPendingPayments();
   const paybills = DB.data.meta.paybills;
   return `${pageHead(I18N.t('Finance'), 'Finance office — verified payments, cash awaiting verification and billed totals',
-    `<a class="btn btn-ghost btn-sm" href="#/users">${icon('users')} Student accounts</a>`)}
+    `<button type="button" class="btn btn-ghost btn-sm" data-action="payments-export">${icon('download')} Export CSV</button><a class="btn btn-ghost btn-sm" href="#/users">${icon('users')} Student accounts</a>`)}
   <div class="stats-grid">
     ${statCard('Verified payments', money(finance.verified), finance.verifiedCount + ' receipts confirmed', 'checkCircle', 'green')}
     ${statCard('Cash awaiting verification', money(finance.pending), finance.pendingCount + ' payments', 'clock', finance.pendingCount ? 'amber' : '')}
@@ -466,7 +468,7 @@ function renderPayments(user) {
   const pending = payments.filter(p => p.status === 'pending');
   const bookings = DB.hostelBookingsForCampus(scope).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   return `${pageHead(I18N.t('Payments'), `${esc(scope)} campus — ${canVerify ? 'verify student M-Pesa payments and hostel bookings' : 'payment and hostel activity (verification handled by campus admins)'}`,
-    `<a class="btn btn-ghost btn-sm" href="#/users">${icon('users')} Students</a>`)}
+    `<button type="button" class="btn btn-ghost btn-sm" data-action="payments-export">${icon('download')} Export CSV</button><a class="btn btn-ghost btn-sm" href="#/users">${icon('users')} Students</a>`)}
   <div class="stats-grid three">
     ${statCard('Awaiting verification', String(pending.length), pending.length ? 'Confirm each reference' : 'Queue is clear', 'clock', pending.length ? 'amber' : 'green')}
     ${statCard('Payments handled', String(payments.filter(p => p.status !== 'pending').length), 'Verified or rejected', 'checkCircle', '')}
@@ -511,7 +513,80 @@ function renderCampuses(user) {
       <tbody>${rows.map(r => `<tr><td><strong>${esc(r.campus)}</strong></td><td>${r.students}</td><td>${r.staff}</td><td>${r.attendance}%${progress(r.attendance)}</td><td>${r.pending}</td><td>${r.hostelRequests}</td></tr>`).join('')}</tbody>
     </table></div>
   </div>
+  ${auditTrailCard(12)}
   <p class="page-note">${icon('info')} Directorate accounts oversee every campus. Finance totals stay with the Finance Office and payment verification stays with campus administrations.</p>`;
+}
+
+/* ---------------- Analytics & audit ---------------- */
+
+const AUDIT_LABELS = {
+  'account.approve': 'Account approved', 'account.reject': 'Registration rejected',
+  'account.suspend': 'Account suspended', 'account.activate': 'Account activated',
+  'marks.save': 'Marks saved', 'marks.import': 'Marks imported',
+  'results.publish': 'Results published', 'results.unpublish': 'Results unpublished',
+  'assignment.create': 'Assignment created', 'assignment.grade': 'Submission graded',
+  'payment.verify': 'Payment verified', 'payment.reject': 'Payment rejected',
+  'finance.paybills': 'Paybill updated', 'hostel.approved': 'Hostel approved', 'hostel.rejected': 'Hostel declined',
+  'notice.create': 'Announcement posted', 'notice.delete': 'Announcement deleted',
+  'registry.update': 'Academic settings', 'document.add': 'Document added', 'document.delete': 'Document removed'
+};
+
+function auditIconFor(action) {
+  if (action.indexOf('payment') === 0 || action.indexOf('finance') === 0) return 'wallet';
+  if (action.indexOf('marks') === 0 || action.indexOf('results') === 0) return 'marks';
+  if (action.indexOf('account') === 0) return 'users';
+  if (action.indexOf('document') === 0) return 'file';
+  if (action.indexOf('notice') === 0) return 'megaphone';
+  if (action.indexOf('hostel') === 0) return 'bed';
+  if (action.indexOf('assignment') === 0) return 'clipboard';
+  return 'shield';
+}
+
+function auditTrailCard(limit) {
+  const entries = DB.auditLog(limit || 24);
+  return `<div class="card">
+    <div class="card-head"><div><h2>Audit trail</h2><p class="card-sub">Administrative actions recorded in this portal</p></div><span class="chip chip-soft">${entries.length} recent</span></div>
+    ${entries.length ? `<div class="audit-list">${entries.map(e => `<div class="audit-row">
+      <span class="audit-glyph">${icon(auditIconFor(e.action))}</span>
+      <span class="audit-copy"><strong>${esc(AUDIT_LABELS[e.action] || e.action)}</strong><small>${esc(e.detail)}</small><em>${esc(e.actorName)}${e.campus && e.campus !== ALL_CAMPUSES ? ' · ' + esc(e.campus) : ''} · ${esc(relative(e.at))}</em></span>
+    </div>`).join('')}</div>` : emptyState('shield', 'No audit entries yet', 'Approvals, payment verification, marks changes and document uploads are recorded here.')}
+    <p class="page-note">${icon('lock')} The trail keeps the latest ${AUDIT_LIMIT} actions on this device. It records who did what, when and for which campus.</p>
+  </div>`;
+}
+
+function passRateCard() {
+  const trend = DB.passRateTrend();
+  const latest = trend[trend.length - 1];
+  return `<div class="card">
+    <div class="card-head"><div><h2>Pass-rate trend</h2><p class="card-sub">Marks at 50% and above, by term</p></div><span class="chip chip-soft">${trend.length} term${trend.length === 1 ? '' : 's'} of data</span></div>
+    ${trend.length ? `<div class="trend-list">${trend.map(t => `<div class="trend-row">
+      <div class="trend-head"><strong>${esc(t.termLabel)}</strong><span>${t.passed}/${t.total} passed · average ${t.average}%</span></div>
+      ${progress(t.rate, t.rate >= 60 ? '' : 'amber')}
+      <small>${t.rate}% pass rate</small>
+    </div>`).join('')}</div>
+    ${latest ? `<p class="page-note">${icon('chart')} Current pass rate is <strong>${latest.rate}%</strong> with an average score of <strong>${latest.average}%</strong>. Marks below 40 are recorded as E.</p>` : ''}`
+    : emptyState('chart', 'No marks to analyse', 'Pass rates appear once marks are entered and published.')}
+  </div>`;
+}
+
+function atRiskCard() {
+  const rows = DB.atRiskStudents();
+  return `<div class="card">
+    <div class="card-head"><div><h2>Students needing support</h2><p class="card-sub">Attendance below 75% or average below 50%</p></div><span class="badge ${rows.length ? 'badge-warn' : 'badge-success'}">${rows.length}</span></div>
+    ${rows.length ? `<div class="table-wrap"><table class="data-table compact"><thead><tr><th>Student</th><th>Campus</th><th>Average</th><th>Attendance</th><th>Reasons</th></tr></thead><tbody>
+      ${rows.slice(0, 8).map(r => `<tr><td><span class="person-cell">${avatar(r.student, 'xs')} <strong>${esc(r.student.name)}</strong></span><small class="cell-sub">${esc(r.student.admissionNo || '')}</small></td><td>${esc(r.student.campus || '—')}</td><td>${r.average === null ? '—' : r.average + '%'}</td><td>${r.attendance}%</td><td><span class="reason-tags">${r.reasons.map(x => `<span class="chip chip-soft">${esc(x)}</span>`).join('')}</span></td></tr>`).join('')}
+    </tbody></table></div>` : `<div class="inline-success">${icon('checkCircle')} No students are currently below the support thresholds.</div>`}
+  </div>`;
+}
+
+function lecturerWorkloadCard() {
+  const rows = DB.lecturerWorkload();
+  return `<div class="card">
+    <div class="card-head"><div><h2>Lecturer workload</h2><p class="card-sub">Units, registered students and marking queues</p></div><span class="chip chip-soft">${rows.length} lecturers</span></div>
+    <div class="table-wrap"><table class="data-table compact"><thead><tr><th>Lecturer</th><th>Units</th><th>Students</th><th>Sessions</th><th>To grade</th></tr></thead><tbody>
+      ${rows.map(r => `<tr><td><span class="person-cell">${avatar(DB.user(r.id), 'xs')} <strong>${esc(r.name)}</strong></span><small class="cell-sub">${esc(r.unitList.join(', ') || 'No units')}</small></td><td>${r.units}</td><td>${r.students}</td><td>${r.sessions}</td><td>${r.ungraded ? `<span class="badge badge-warn">${r.ungraded}</span>` : `<span class="badge badge-success">0</span>`}</td></tr>`).join('')}
+    </tbody></table></div>
+  </div>`;
 }
 
 function renderQuality(user) {
@@ -541,6 +616,14 @@ function renderQuality(user) {
       <div class="card-head"><div><h2>Campus comparison</h2><p class="card-sub">Attendance by campus</p></div></div>
       <div class="qa-list">${qa.campuses.map(c => `<div class="qa-row"><span>${esc(c.campus)}</span>${progress(c.attendance)}<strong>${c.attendance}%</strong></div>`).join('')}</div>
     </div>
+  </div>
+  <div class="dash-grid">
+    ${passRateCard()}
+    ${atRiskCard()}
+  </div>
+  <div class="dash-grid">
+    ${lecturerWorkloadCard()}
+    ${auditTrailCard(18)}
   </div>
   <div class="card">
     <div class="card-head"><div><h2>Quality assurance role</h2><p class="card-sub">What this office does in the portal</p></div>${icon('shield')}</div>

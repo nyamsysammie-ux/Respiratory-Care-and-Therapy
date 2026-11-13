@@ -1,8 +1,9 @@
 /* TSMHST Portal — application shell, authentication and student/staff views */
 const PORTAL_STATE = {
   marks: { unitCode: null, sort: 'admission', order: null },
-  attendance: { unitCode: null },
+  attendance: { unitCode: null, code: '' },
   timetable: { tab: 'classes', programme: 'all' },
+  documents: { category: 'All' },
   asgFilter: 'all'
 };
 
@@ -35,7 +36,8 @@ function navGroups(role) {
       label: 'Academic', items: [
         { route: 'transcript', label: 'Transcript', icon: 'file' },
         { route: 'fees', label: 'Fees', icon: 'wallet' },
-        { route: 'hostel', label: 'Hostel', icon: 'bed' }
+        { route: 'hostel', label: 'Hostel', icon: 'bed' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
       ]
     });
     portal();
@@ -47,7 +49,8 @@ function navGroups(role) {
         { route: 'timetable', label: 'Timetable', icon: 'calendar' },
         { route: 'attendance', label: 'Attendance', icon: 'check' },
         { route: 'marks', label: 'Marks', icon: 'marks' },
-        { route: 'assignments', label: 'Assignments', icon: 'clipboard' }
+        { route: 'assignments', label: 'Assignments', icon: 'clipboard' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
       ]
     });
     comms();
@@ -64,7 +67,7 @@ function navGroups(role) {
       ]
     });
     comms();
-    groups.push({ label: 'Service', items: [{ route: 'quality', label: 'Quality assurance', icon: 'shield' }] });
+    groups.push({ label: 'Service', items: [{ route: 'quality', label: 'Quality assurance', icon: 'shield' }, { route: 'documents', label: 'Documents', icon: 'file' }] });
     portal();
   } else if (role === 'principal') {
     groups.push({
@@ -74,7 +77,8 @@ function navGroups(role) {
         { route: 'users', label: 'Users', icon: 'users' },
         { route: 'payments', label: 'Payments', icon: 'wallet' },
         { route: 'academics', label: 'Academics', icon: 'academics' },
-        { route: 'timetable', label: 'Timetable & exams', icon: 'calendar' }
+        { route: 'timetable', label: 'Timetable & exams', icon: 'calendar' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
       ]
     });
     comms();
@@ -85,7 +89,8 @@ function navGroups(role) {
         { route: 'home', label: 'Home', icon: 'home' },
         { route: 'approvals', label: 'Approvals', icon: 'approvals' },
         { route: 'users', label: 'Users', icon: 'users' },
-        { route: 'payments', label: 'Payments', icon: 'wallet' }
+        { route: 'payments', label: 'Payments', icon: 'wallet' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
       ]
     });
     comms();
@@ -96,7 +101,8 @@ function navGroups(role) {
         { route: 'home', label: 'Home', icon: 'home' },
         { route: 'academics', label: 'Academics', icon: 'academics' },
         { route: 'timetable', label: 'Timetable & exams', icon: 'calendar' },
-        { route: 'users', label: 'Users', icon: 'users' }
+        { route: 'users', label: 'Users', icon: 'users' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
       ]
     });
     comms();
@@ -107,7 +113,8 @@ function navGroups(role) {
         { route: 'home', label: 'Home', icon: 'home' },
         { route: 'marks', label: 'Marks studio', icon: 'marks' },
         { route: 'timetable', label: 'Timetable & exams', icon: 'calendar' },
-        { route: 'academics', label: 'Academics', icon: 'academics' }
+        { route: 'academics', label: 'Academics', icon: 'academics' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
       ]
     });
     comms();
@@ -117,7 +124,8 @@ function navGroups(role) {
       label: 'Quality assurance', items: [
         { route: 'home', label: 'Home', icon: 'home' },
         { route: 'quality', label: 'Service quality', icon: 'shield' },
-        { route: 'campuses', label: 'Campuses', icon: 'academics' }
+        { route: 'campuses', label: 'Campuses', icon: 'academics' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
       ]
     });
     comms();
@@ -126,7 +134,8 @@ function navGroups(role) {
     groups.push({
       label: 'Finance office', items: [
         { route: 'home', label: 'Home', icon: 'home' },
-        { route: 'finance', label: 'Finance', icon: 'finance' }
+        { route: 'finance', label: 'Finance', icon: 'finance' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
       ]
     });
     comms();
@@ -136,7 +145,8 @@ function navGroups(role) {
       label: 'Administration', items: [
         { route: 'home', label: 'Home', icon: 'home' },
         { route: 'announcements', label: 'Announcements', icon: 'megaphone' },
-        { route: 'users', label: 'Users', icon: 'users' }
+        { route: 'users', label: 'Users', icon: 'users' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
       ]
     });
     portal();
@@ -150,6 +160,7 @@ function navGroups(role) {
     });
     groups.push({
       label: 'Portal', items: [
+        { route: 'documents', label: 'Documents', icon: 'file' },
         { route: 'about', label: 'About', icon: 'info' },
         { route: 'settings', label: 'Settings', icon: 'settings' }
       ]
@@ -165,7 +176,7 @@ function routeTitle(route) {
     settings: 'Settings', notifications: 'Notifications', approvals: 'Approvals', users: 'Users',
     academics: 'Academics', marks: 'Marks studio', finance: 'Finance', announcements: 'Announcements',
     campuses: 'Campuses', payments: 'Payments', quality: 'Service quality',
-    timetable: 'Timetable & exams'
+    timetable: 'Timetable & exams', documents: 'Document vault'
   };
   return titles[route] || 'Portal';
 }
@@ -266,7 +277,7 @@ function sidebarHTML(user, route) {
     <div class="side-term"><span>${esc(I18N.t('Current term'))}</span><strong>${esc(DB.data.meta.termLabel)}</strong></div>
     <nav class="side-nav">
       ${groups.map(g => `<div class="nav-group"><span class="nav-group-label">${esc(g.label)}</span>
-        ${g.items.map(item => `<a class="side-link ${route === item.route ? 'active' : ''}" href="#/${item.route}">${icon(item.icon)}<span>${esc(I18N.t(item.label))}</span></a>`).join('')}
+        ${g.items.map(item => `<a class="side-link ${route === item.route ? 'active' : ''}" href="#/${item.route}" ${route === item.route ? 'aria-current="page"' : ''}>${icon(item.icon)}<span>${esc(I18N.t(item.label))}</span></a>`).join('')}
       </div>`).join('')}
     </nav>
     <div class="side-user">
@@ -289,7 +300,7 @@ function moreSheetHTML(user, route) {
       <button type="button" class="icon-btn" data-action="close-more" aria-label="${esc(I18N.t('Close'))}">${icon('x')}</button>
     </div>
     <div class="more-grid">
-      ${items.map(item => `<a class="more-tile ${route === item.route ? 'active' : ''}" href="#/${item.route}">${icon(item.icon)}<span>${esc(I18N.t(item.label))}</span></a>`).join('')}
+      ${items.map(item => `<a class="more-tile ${route === item.route ? 'active' : ''}" href="#/${item.route}" ${route === item.route ? 'aria-current="page"' : ''}>${icon(item.icon)}<span>${esc(I18N.t(item.label))}</span></a>`).join('')}
     </div>
     <div class="more-actions">
       <button type="button" class="btn btn-ghost" data-action="install-app">${icon('download')} ${esc(I18N.t('Install app'))}</button>
@@ -321,8 +332,8 @@ function portalShell(user, route, content) {
       <main class="page" id="page-content">${content}</main>
     </div>
     <nav class="bottom-nav" aria-label="Primary navigation">
-      ${bottom.map(item => `<a class="bottom-link ${route === item.route ? 'active' : ''}" href="#/${item.route}">${icon(item.icon)}<span>${esc(I18N.t(item.label))}</span></a>`).join('')}
-      <button type="button" class="bottom-link ${bottom.every(i => i.route !== route) ? 'active' : ''}" data-action="open-more">${icon('menu')}<span>${esc(I18N.t('More'))}</span></button>
+      ${bottom.map(item => `<a class="bottom-link ${route === item.route ? 'active' : ''}" href="#/${item.route}" ${route === item.route ? 'aria-current="page"' : ''}>${icon(item.icon)}<span>${esc(I18N.t(item.label))}</span></a>`).join('')}
+      <button type="button" class="bottom-link ${bottom.every(i => i.route !== route) ? 'active' : ''}" data-action="open-more" aria-expanded="false" aria-controls="more-sheet">${icon('menu')}<span>${esc(I18N.t('More'))}</span></button>
     </nav>
     ${moreSheetHTML(user, route)}
   </div>`;
@@ -467,6 +478,7 @@ function renderPage(user, route) {
   if (route === 'timetable') return renderTimetable(user);
   if (route === 'fees') return renderFees(user);
   if (route === 'hostel') return renderHostel(user);
+  if (route === 'documents') return renderDocuments(user);
   if (route === 'team') return renderTeam(user);
   if (route === 'notifications') return renderNotifications(user);
   if (route === 'about') return renderAbout(user);
@@ -913,7 +925,7 @@ function renderFees(user) {
   const invoice = DB.invoiceFor(user.id);
   const payments = DB.paymentsFor(user.id);
   const paybills = DB.data.meta.paybills;
-  return `${pageHead(I18N.t('Fees'), `${esc(DB.data.meta.termLabel)} · ${esc(user.admissionNo)}`, `<button type="button" class="btn btn-primary btn-sm" data-action="pay-fees">${icon('wallet')} ${esc(I18N.t('Pay now'))}</button>`)}
+  return `${pageHead(I18N.t('Fees'), `${esc(DB.data.meta.termLabel)} · ${esc(user.admissionNo)}`, `<button type="button" class="btn btn-ghost btn-sm" data-action="fee-statement">${icon('download')} Statement PDF</button><button type="button" class="btn btn-primary btn-sm" data-action="pay-fees">${icon('wallet')} ${esc(I18N.t('Pay now'))}</button>`)}
   <div class="stats-grid">
     ${statCard(I18N.t('Total billed'), money(fees.billed), 'Current account statement', 'file', '')}
     ${statCard(I18N.t('Total paid'), money(fees.paid), 'Verified payments', 'checkCircle', 'green')}
@@ -941,12 +953,138 @@ function renderFees(user) {
   </div>
   <div class="card">
     <div class="card-head"><div><h2>${esc(I18N.t('Payment history'))}</h2><p class="card-sub">${payments.length} transaction${payments.length === 1 ? '' : 's'}</p></div></div>
-    ${payments.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Reference</th><th>Method</th><th class="right">Amount</th><th>Status</th></tr></thead><tbody>${payments.map(p => `<tr><td>${esc(fmtDate(p.createdAt, true))}</td><td><code>${esc(p.reference)}</code></td><td>${esc(p.method)}</td><td class="right">${money(p.amount)}</td><td>${statusBadge(p.status)}</td></tr>`).join('')}</tbody></table></div>` : emptyState('wallet', 'No payments yet', 'Your M-Pesa payments will appear here after you record them.')}
+    ${payments.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Reference</th><th>Method</th><th class="right">Amount</th><th>Status</th><th></th></tr></thead><tbody>${payments.map(p => `<tr><td>${esc(fmtDate(p.createdAt, true))}</td><td><code>${esc(p.reference)}</code></td><td>${esc(p.method)}</td><td class="right">${money(p.amount)}</td><td>${statusBadge(p.status)}</td><td class="right">${p.status === 'verified' ? `<button type="button" class="btn btn-ghost btn-xs" data-action="payment-receipt" data-payment="${p.id}">${icon('download')} Receipt</button>` : `<span class="muted-text">—</span>`}</td></tr>`).join('')}</tbody></table></div>` : emptyState('wallet', 'No payments yet', 'Your M-Pesa payments will appear here after you record them.')}
   </div>
   <div class="card">
     <div class="card-head"><div><h2>Hostel accommodation</h2><p class="card-sub">Accommodation is paid separately through Buy Goods</p></div><a class="card-link" href="#/hostel">${esc(I18N.t('Book hostel'))} ${icon('chevron')}</a></div>
     ${paybillCard(I18N.t('Hostel Buy Goods'), paybills.hostel, '')}
   </div>`;
+}
+
+/* ---------------- Fee documents (PDF) ---------------- */
+
+function feePdfFooter() {
+  return APP.name + ' · ' + APP.officeEmail + ' · ' + APP.officePhoneDisplay + ' · ' + APP.address;
+}
+
+function feeStudentRows(student) {
+  const programme = programmeFor(student.programme);
+  return [
+    ['Student', student.name],
+    ['Admission number', student.admissionNo || '—'],
+    ['Programme', programme.name + ' (' + programme.code + ')'],
+    ['Campus', student.campus || '—'],
+    ['Term', DB.data.meta.termLabel + ' (' + DB.data.meta.termCode + ')']
+  ];
+}
+
+function buildReceiptPDF(student, payment) {
+  const fees = DB.feeSummary(student.id);
+  const verifier = payment.verifiedBy ? DB.user(payment.verifiedBy) : null;
+  const doc = pdfDocument({ footer: feePdfFooter() });
+  pdfLetterhead(doc, 'Official fee receipt', 'This receipt confirms a verified M-Pesa payment');
+  doc.text('Receipt no. ' + payment.reference, { size: 11, bold: true, color: [0.42, 0.12, 0.16], gap: 2 });
+  doc.text('Issued ' + fmtDate(payment.verifiedAt || payment.createdAt, true), { size: 8.5, color: [0.42, 0.44, 0.4] });
+  doc.space(6);
+  doc.table(
+    [{ label: 'Details', width: 0.32 }, { label: 'Student account', width: 0.68, bold: false }],
+    feeStudentRows(student).concat([
+      ['Payment method', payment.method],
+      ['M-Pesa reference', payment.reference],
+      ['Date paid', fmtDate(payment.createdAt, true)],
+      ['Verified on', payment.verifiedAt ? fmtDate(payment.verifiedAt, true) : '—'],
+      ['Received by', verifier ? verifier.name + ' (' + roleLabel(verifier.role) + ')' : 'Finance office']
+    ])
+  );
+  doc.space(4);
+  doc.text('Amount received', { size: 9, bold: true, color: [0.25, 0.55, 0.12] });
+  doc.text(money(payment.amount), { size: 24, bold: true, color: [0.25, 0.55, 0.12], gap: 6 });
+  doc.band(
+    [{ label: 'Billed', width: 0.25 }, { label: 'Verified paid', width: 0.25 }, { label: 'Pending', width: 0.25 }, { label: 'Balance', width: 0.25, align: 'right' }],
+    [money(fees.billed), money(fees.paid), money(fees.pending), money(fees.balance)]
+  );
+  doc.space(8);
+  doc.text('This is a computer-generated receipt from the TSMHST Portal. Keep it for your records. If the details above do not match your M-Pesa message, contact the Finance Office on ' + APP.officePhoneDisplay + ' or ' + APP.officeEmail + '.', { size: 8, wrap: true, color: [0.35, 0.37, 0.33] });
+  downloadBlob(doc.build(), 'TSMHST-receipt-' + payment.reference + '.pdf');
+}
+
+function buildStatementPDF(student) {
+  const fees = DB.feeSummary(student.id);
+  const invoice = DB.invoiceFor(student.id);
+  const payments = DB.paymentsFor(student.id);
+  const doc = pdfDocument({ footer: feePdfFooter() });
+  pdfLetterhead(doc, 'Fee statement', DB.data.meta.termLabel + ' · ' + DB.data.meta.termCode + ' · issued ' + fmtDate(new Date().toISOString()));
+  doc.table(
+    [{ label: 'Field', width: 0.32 }, { label: 'Student', width: 0.68, bold: false }],
+    feeStudentRows(student)
+  );
+  if (invoice) {
+    doc.text('Invoiced items', { size: 10, bold: true, color: [0.42, 0.12, 0.16] });
+    doc.table(
+      [{ label: 'Item', width: 0.8 }, { label: 'Amount (Ksh.)', width: 0.2, align: 'right' }],
+      invoice.items.map(item => [item.label, Number(item.amount).toLocaleString('en-KE')])
+    );
+  } else {
+    doc.text('No invoice has been raised for this term.', { size: 9, color: [0.45, 0.46, 0.43] });
+  }
+  doc.band(
+    [{ label: 'Billed', width: 0.25 }, { label: 'Verified paid', width: 0.25 }, { label: 'Pending', width: 0.25 }, { label: 'Outstanding', width: 0.25, align: 'right' }],
+    [money(fees.billed), money(fees.paid), money(fees.pending), money(fees.balance)],
+    { height: 28, size: 9 }
+  );
+  doc.space(6);
+  doc.text('Verified payments', { size: 10, bold: true, color: [0.42, 0.12, 0.16] });
+  const verified = payments.filter(p => p.status === 'verified');
+  if (verified.length) {
+    doc.table(
+      [
+        { label: 'Date', width: 0.2 }, { label: 'Reference', width: 0.24 }, { label: 'Method', width: 0.16 },
+        { label: 'Amount (Ksh.)', width: 0.2, align: 'right' }, { label: 'Received by', width: 0.2, bold: false }
+      ],
+      verified.slice().reverse().map(p => {
+        const by = p.verifiedBy ? DB.user(p.verifiedBy) : null;
+        return [fmtDate(p.createdAt), p.reference, p.method, Number(p.amount).toLocaleString('en-KE'), by ? by.name : 'Finance'];
+      })
+    );
+  } else {
+    doc.text('No verified payments have been recorded yet.', { size: 9, color: [0.45, 0.46, 0.43] });
+  }
+  const pending = payments.filter(p => p.status === 'pending');
+  if (pending.length) {
+    doc.space(4);
+    doc.text('Awaiting verification', { size: 10, bold: true, color: [0.6, 0.42, 0.05] });
+    doc.table(
+      [{ label: 'Date', width: 0.3 }, { label: 'Reference', width: 0.4 }, { label: 'Amount (Ksh.)', width: 0.3, align: 'right' }],
+      pending.map(p => [fmtDate(p.createdAt), p.reference, Number(p.amount).toLocaleString('en-KE')])
+    );
+  }
+  const hostel = DB.hostelBookingsFor(student.id).filter(b => b.termCode === DB.data.meta.termCode);
+  if (hostel.length) {
+    const room = HOSTELS.find(h => h.id === hostel[0].hostelId);
+    doc.space(2);
+    doc.text('Hostel accommodation: ' + (hostel[0].status === 'approved' ? 'approved' : hostel[0].status) + ' · ' + (room ? room.room + ' · ' + money(room.perTerm) + ' per term, paid separately by Buy Goods.' : ''), { size: 8.5, wrap: true, color: [0.35, 0.37, 0.33] });
+  }
+  doc.space(8);
+  doc.rule();
+  doc.text('Fee structures are set by the Finance Office. Only payments verified against an M-Pesa reference reduce the balance. Queries: ' + APP.officeEmail + ' · ' + APP.officePhoneDisplay + '.', { size: 8, wrap: true, color: [0.35, 0.37, 0.33] });
+  downloadBlob(doc.build(), 'TSMHST-fee-statement-' + String(student.admissionNo || student.id).replace(/[^A-Za-z0-9]+/g, '-') + '.pdf');
+}
+
+/* Text documents in the vault are exported as a branded PDF. */
+function downloadVaultDocument(docRecord) {
+  const doc = pdfDocument({ footer: feePdfFooter() });
+  pdfLetterhead(doc, docRecord.title, docRecord.category + ' · issued ' + fmtDate(docRecord.createdAt));
+  if (docRecord.summary) doc.text(docRecord.summary, { size: 10, color: [0.35, 0.37, 0.33], wrap: true });
+  doc.space(10);
+  String(docRecord.body || '').split(/\n{2,}/).forEach(paragraph => {
+    doc.text(paragraph.trim(), { size: 9.5, wrap: true });
+    doc.space(6);
+  });
+  const author = docRecord.createdBy ? DB.user(docRecord.createdBy) : null;
+  doc.space(6);
+  doc.rule();
+  doc.text('Published by ' + (author ? author.name + ' — ' + roleLabel(author.role) : 'TSMHST administration') + '.', { size: 8, color: [0.42, 0.44, 0.4] });
+  downloadBlob(doc.build(), 'TSMHST-' + docRecord.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '.pdf');
 }
 
 function renderHostel(user) {
@@ -978,6 +1116,45 @@ function renderHostel(user) {
   </div>`;
 }
 
+/* ---------------- Document vault ---------------- */
+
+function documentSizeLabel(doc) {
+  if (!doc.size) return doc.dataUrl ? 'File' : 'Text';
+  if (doc.size < 1024) return doc.size + ' B';
+  if (doc.size < 1024 * 1024) return Math.round(doc.size / 1024) + ' KB';
+  return (doc.size / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function renderDocuments(user) {
+  const canManage = isStaffRole(user.role);
+  const docs = DB.documentsFor(user);
+  const categories = ['All'].concat(DB.documentCategories());
+  const selected = categories.indexOf(PORTAL_STATE.documents.category) === -1 ? 'All' : PORTAL_STATE.documents.category;
+  const list = selected === 'All' ? docs : docs.filter(d => d.category === selected);
+  return `${pageHead('Document vault', 'Official policies, guidelines and files — available even without a network connection',
+    canManage ? `<button type="button" class="btn btn-primary btn-sm" data-action="document-upload">${icon('plus')} Add document</button>` : '')}
+  <div class="toolbar">
+    <label class="inline-select"><span>Category</span><select class="control" id="doc-category" aria-label="Filter by category">${categories.map(c => `<option value="${esc(c)}" ${c === selected ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
+    <span class="chip chip-soft">${list.length} document${list.length === 1 ? '' : 's'}</span>
+  </div>
+  ${list.length ? `<div class="doc-grid">${list.map(d => {
+    const author = d.createdBy ? DB.user(d.createdBy) : null;
+    return `<article class="doc-card">
+      <div class="doc-top"><span class="doc-icon">${icon(d.dataUrl ? 'file' : 'bookOpen')}</span><span class="badge badge-info">${esc(d.category)}</span></div>
+      <h3>${esc(d.title)}</h3>
+      <p class="muted-text">${esc(d.summary || 'No summary provided.')}</p>
+      <div class="doc-meta"><span>${icon('calendar')} ${esc(fmtDate(d.createdAt))}</span><span>${icon('users')} ${esc(audienceLabel(d.audience))}</span><span>${esc(documentSizeLabel(d))}</span></div>
+      <div class="doc-actions">
+        <button type="button" class="btn btn-ghost btn-sm" data-action="document-open" data-document="${d.id}">${icon('eye')} Open</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="document-download" data-document="${d.id}">${icon('download')} ${d.dataUrl ? 'Download' : 'PDF'}</button>
+        ${canManage ? `<button type="button" class="btn btn-danger-ghost btn-sm" data-action="document-delete" data-document="${d.id}" aria-label="Delete ${esc(d.title)}">${icon('trash')}</button>` : ''}
+      </div>
+      ${author ? `<small class="doc-author">Added by ${esc(author.name)}</small>` : ''}
+    </article>`;
+  }).join('')}</div>` : `<div class="card">${emptyState('file', 'No documents here', canManage ? 'Add a policy, guideline or notice so students and staff can read it offline.' : 'Documents shared by the administration will appear here.', canManage ? `<button type="button" class="btn btn-primary" data-action="document-upload">${icon('plus')} Add document</button>` : '')}</div>`}
+  <p class="page-note">${icon('shield')} Documents are stored on this device for offline reading. Uploads above 800 KB are rejected to keep the offline cache reliable — link to large files instead.</p>`;
+}
+
 /* ---------------- Attendance ---------------- */
 
 function renderAttendance(user) {
@@ -998,7 +1175,8 @@ function renderStudentAttendance(user) {
     <div class="signin-copy"><span class="eyebrow">${sessions.length ? 'Session live' : 'Class sign-in'}</span><h2>${sessions.length ? sessions.length + ' open session' + (sessions.length === 1 ? '' : 's') : 'No open sessions right now'}</h2><p>${sessions.length ? 'Enter the code displayed by your lecturer to sign in.' : 'When your lecturer opens a session, enter the 6-digit code here.'}</p>
       ${sessions.length ? `<div class="open-session-list">${sessions.map(s => `<span class="open-session">${esc(s.unitCode)} · closes ${esc(new Date(s.closesAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))}</span>`).join('')}</div>` : ''}
     </div>
-    <form class="signin-form" data-form="signin-code"><input name="code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-digit code" aria-label="Attendance code" required><button type="submit" class="btn btn-primary" ${sessions.length ? '' : 'disabled'}>${esc(I18N.t('Sign in'))}</button></form>
+    <form class="signin-form" data-form="signin-code"><input name="code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-digit code" aria-label="Attendance code" value="${esc(PORTAL_STATE.attendance.code || '')}" required><button type="submit" class="btn btn-primary" ${sessions.length ? '' : 'disabled'}>${esc(I18N.t('Sign in'))}</button></form>
+    ${PORTAL_STATE.attendance.code ? `<p class="qr-hint">${icon('check')} Code <strong>${esc(PORTAL_STATE.attendance.code)}</strong> was read from the class QR. Tap Sign in to confirm.</p>` : ''}
   </div>
   <div class="stats-grid three">
     ${statCard(I18N.t('Attendance percentage'), overall.percent + '%', 'across your registered units', 'check', overall.percent >= 75 ? 'green' : 'amber')}
@@ -1017,6 +1195,16 @@ function renderStudentAttendance(user) {
 
 function attendanceUnitsFor(user) {
   return user.role === 'admin' ? DB.data.units.filter(u => u.current) : DB.unitsForLecturer(user.id);
+}
+
+function attendanceDeepLink(code) {
+  return location.origin + location.pathname + '#/attendance?code=' + encodeURIComponent(code);
+}
+
+function sessionQrHTML(session) {
+  const svg = qrSvg(attendanceDeepLink(session.code), 3);
+  if (!svg) return '';
+  return `<div class="session-qr">${svg}<div class="session-qr-copy"><strong>Scan to sign in</strong><small>or enter code ${esc(session.code)}</small><button type="button" class="btn btn-ghost btn-xs" data-action="session-qr" data-session="${session.id}">${icon('eye')} Show large</button></div></div>`;
 }
 
 function renderStaffAttendance(user) {
@@ -1044,6 +1232,7 @@ function renderStaffAttendance(user) {
           <div class="live-stats"><div><strong>${records.length}</strong><span>signed in</span></div><div><strong>${Math.max(0, students.length - records.length)}</strong><span>not yet</span></div></div>
           <button type="button" class="btn btn-danger-ghost btn-sm" data-action="session-close" data-session="${s.id}">${esc(I18N.t('End session'))}</button>
         </div>
+        ${sessionQrHTML(s)}
         <details class="roster-details"><summary>${esc(I18N.t('Roster'))} (${records.length}/${students.length})</summary>
           <div class="roster-grid">${students.map(st => { const at = records.find(r => r.studentId === st.id); return `<span class="roster-person ${at ? 'in' : ''}">${avatar(st, 'xs')} ${esc(st.name)} ${at ? icon('check') : ''}</span>`; }).join('')}</div>
         </details>`;

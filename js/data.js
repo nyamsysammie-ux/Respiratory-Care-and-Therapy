@@ -3,7 +3,7 @@ const APP = {
   name: 'TSMHST Portal',
   school: 'Tricent School of Medical Health Science and Technology',
   short: 'TSMHST',
-  version: '1.4.0',
+  version: '1.5.0',
   build: '13 November 2026',
   domain: 'www.tsmhst.ac.ke',
   websiteUrl: 'https://www.tsmhst.ac.ke',
