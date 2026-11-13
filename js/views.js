@@ -2,6 +2,7 @@
 const PORTAL_STATE = {
   marks: { unitCode: null, sort: 'admission', order: null },
   attendance: { unitCode: null },
+  timetable: { tab: 'classes', programme: 'all' },
   asgFilter: 'all'
 };
 
@@ -25,6 +26,7 @@ function navGroups(role) {
         { route: 'home', label: 'Home', icon: 'home' },
         { route: 'units', label: 'Units', icon: 'book' },
         { route: 'assignments', label: 'Assignments', icon: 'clipboard' },
+        { route: 'timetable', label: 'Timetable', icon: 'calendar' },
         { route: 'results', label: 'Results', icon: 'chart' },
         { route: 'attendance', label: 'Attendance', icon: 'check' }
       ]
@@ -42,6 +44,7 @@ function navGroups(role) {
       label: 'Teaching', items: [
         { route: 'home', label: 'Home', icon: 'home' },
         { route: 'units', label: 'My units', icon: 'book' },
+        { route: 'timetable', label: 'Timetable', icon: 'calendar' },
         { route: 'attendance', label: 'Attendance', icon: 'check' },
         { route: 'marks', label: 'Marks', icon: 'marks' },
         { route: 'assignments', label: 'Assignments', icon: 'clipboard' }
@@ -56,7 +59,8 @@ function navGroups(role) {
         { route: 'campuses', label: 'Campuses', icon: 'academics' },
         { route: 'approvals', label: 'Approvals', icon: 'approvals' },
         { route: 'users', label: 'Users', icon: 'users' },
-        { route: 'marks', label: 'Marks oversight', icon: 'marks' }
+        { route: 'marks', label: 'Marks oversight', icon: 'marks' },
+        { route: 'timetable', label: 'Timetable & exams', icon: 'calendar' }
       ]
     });
     comms();
@@ -69,7 +73,8 @@ function navGroups(role) {
         { route: 'approvals', label: 'Approvals', icon: 'approvals' },
         { route: 'users', label: 'Users', icon: 'users' },
         { route: 'payments', label: 'Payments', icon: 'wallet' },
-        { route: 'academics', label: 'Academics', icon: 'academics' }
+        { route: 'academics', label: 'Academics', icon: 'academics' },
+        { route: 'timetable', label: 'Timetable & exams', icon: 'calendar' }
       ]
     });
     comms();
@@ -90,6 +95,7 @@ function navGroups(role) {
       label: 'Academic registry', items: [
         { route: 'home', label: 'Home', icon: 'home' },
         { route: 'academics', label: 'Academics', icon: 'academics' },
+        { route: 'timetable', label: 'Timetable & exams', icon: 'calendar' },
         { route: 'users', label: 'Users', icon: 'users' }
       ]
     });
@@ -100,6 +106,7 @@ function navGroups(role) {
       label: 'Examinations', items: [
         { route: 'home', label: 'Home', icon: 'home' },
         { route: 'marks', label: 'Marks studio', icon: 'marks' },
+        { route: 'timetable', label: 'Timetable & exams', icon: 'calendar' },
         { route: 'academics', label: 'Academics', icon: 'academics' }
       ]
     });
@@ -157,7 +164,8 @@ function routeTitle(route) {
     fees: 'Fees', hostel: 'Hostel', attendance: 'Attendance', team: 'Team & presence', about: 'About',
     settings: 'Settings', notifications: 'Notifications', approvals: 'Approvals', users: 'Users',
     academics: 'Academics', marks: 'Marks studio', finance: 'Finance', announcements: 'Announcements',
-    campuses: 'Campuses', payments: 'Payments', quality: 'Service quality'
+    campuses: 'Campuses', payments: 'Payments', quality: 'Service quality',
+    timetable: 'Timetable & exams'
   };
   return titles[route] || 'Portal';
 }
@@ -456,6 +464,7 @@ function renderPage(user, route) {
   if (route === 'results') return renderResults(user);
   if (route === 'transcript') return renderTranscript(user);
   if (route === 'attendance') return renderAttendance(user);
+  if (route === 'timetable') return renderTimetable(user);
   if (route === 'fees') return renderFees(user);
   if (route === 'hostel') return renderHostel(user);
   if (route === 'team') return renderTeam(user);
@@ -509,7 +518,7 @@ function todayClasses(user, units) {
   const today = DAYS_SHORT[new Date().getDay()];
   const ordered = units.slice().sort((a, b) => ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].indexOf(a.day) - ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].indexOf(b.day));
   return `<div class="card">
-    <div class="card-head"><div><h2>${esc(I18N.t("Today's classes"))}</h2><p class="card-sub">${today === 'Sun' || today === 'Sat' ? 'Weekend — no scheduled classes' : 'Your weekly timetable'}</p></div><span class="chip chip-soft">${esc(DB.data.meta.termLabel)}</span></div>
+    <div class="card-head"><div><h2>${esc(I18N.t("Today's classes"))}</h2><p class="card-sub">${today === 'Sun' || today === 'Sat' ? 'Weekend — no scheduled classes' : 'Your weekly timetable'}</p></div><a class="card-link" href="#/timetable">${esc(I18N.t('Full timetable'))}</a></div>
     ${ordered.length ? `<div class="class-list">${ordered.map(u => {
       const isToday = u.day === today;
       return `<div class="class-row ${isToday ? 'today' : ''}">
@@ -1050,6 +1059,185 @@ function renderStaffAttendance(user) {
       ${students.map(st => { const all = sessions.map(s => s.id); const count = DB.data.attendance.filter(a => a.studentId === st.id && all.includes(a.sessionId)).length; const pct = sessions.length ? Math.round(count / sessions.length * 100) : 0; return `<tr><td><span class="person-cell">${avatar(st, 'xs')} ${esc(st.name)}</span></td><td>${esc(st.admissionNo)}</td><td>${count}/${sessions.length}</td><td><div class="inline-progress">${progress(pct, pct < 75 ? 'warn' : '')}<span>${pct}%</span></div></td></tr>`; }).join('')}
     </tbody></table></div>
   </div>`}`;
+}
+
+/* ---------------- Timetable & examinations ---------------- */
+
+const TT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+const TT_DAY_LABELS = { Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday' };
+
+function ttMinutes(time) {
+  const [h, m] = String(time || '0:0').split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+function programmeHue(code) {
+  const index = PORTAL_PROGRAMMES.findIndex(p => p.code === code);
+  return ((index < 0 ? 0 : index) * 53 + 12) % 360;
+}
+
+function timetableScope(user) {
+  const current = DB.data.units.filter(u => u.current);
+  if (user.role === 'student') {
+    const codes = new Set(DB.registrationsFor(user.id, DB.data.meta.termCode).map(r => r.unitCode));
+    return current.filter(u => codes.has(u.code));
+  }
+  if (user.role === 'lecturer') return current.filter(u => u.lecturer === user.id);
+  if ((user.role === 'principal' || user.role === 'campus_admin') && user.campus) {
+    const ids = new Set(DB.data.users.filter(u => u.role === 'student' && u.campus === user.campus).map(u => u.id));
+    const codes = new Set(DB.data.registrations.filter(r => ids.has(r.studentId)).map(r => r.unitCode));
+    return current.filter(u => codes.has(u.code));
+  }
+  return current;
+}
+
+function timetableData(user) {
+  const programme = user.role === 'student' ? 'all' : PORTAL_STATE.timetable.programme;
+  const units = timetableScope(user).filter(u => programme === 'all' || u.programme === programme);
+  const codes = new Set(units.map(u => u.code));
+  const exams = EXAM_CALENDAR
+    .filter(e => codes.has(e.unitCode))
+    .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+  return { units, exams, programme };
+}
+
+function examDayLabel(date) {
+  return new Date(date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
+}
+
+function examCountdown(exam) {
+  if (new Date(`${exam.date}T${exam.end}:00`).getTime() <= Date.now()) return 'Completed';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((new Date(exam.date + 'T00:00:00').getTime() - today.getTime()) / DAY);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  return `In ${days} days`;
+}
+
+function classCardHTML(u) {
+  const lecturer = DB.user(u.lecturer);
+  const [start, end] = String(u.time || '').split(' - ');
+  return `<article class="tt-class" style="--tt-accent:hsl(${programmeHue(u.programme)} 52% 42%)">
+    <span class="tt-time">${icon('clock')} ${esc(start || '')} – ${esc(end || '')}</span>
+    <strong class="tt-code">${esc(u.code)}</strong>
+    <span class="tt-title">${esc(u.title)}</span>
+    <div class="tt-meta">
+      <span>${icon('pin')} ${esc(u.room)}</span>
+      <span>${icon('user')} ${esc(lecturer ? lecturer.name : 'Lecturer')}</span>
+    </div>
+    <span class="tt-programme">${esc(u.programme)} · ${esc(u.type)}</span>
+  </article>`;
+}
+
+function weeklyGridHTML(units) {
+  return `<div class="tt-grid">${TT_DAYS.map(day => {
+    const classes = units.filter(u => u.day === day).sort((a, b) => ttMinutes(a.time) - ttMinutes(b.time));
+    return `<section class="tt-col">
+      <header class="tt-col-head"><strong>${esc(TT_DAY_LABELS[day])}</strong><span>${classes.length} class${classes.length === 1 ? '' : 'es'}</span></header>
+      <div class="tt-col-body">${classes.length ? classes.map(classCardHTML).join('') : `<p class="tt-empty">No classes</p>`}</div>
+    </section>`;
+  }).join('')}</div>`;
+}
+
+function examCalendarHTML(exams, user) {
+  const groups = {};
+  exams.forEach(e => { (groups[e.date] = groups[e.date] || []).push(e); });
+  return Object.keys(groups).sort().map(date => {
+    const list = groups[date].slice().sort((a, b) => ttMinutes(a.start) - ttMinutes(b.start));
+    return `<section class="exam-day">
+      <header class="exam-day-head">
+        <div><strong>${esc(examDayLabel(date))}</strong><span>${list.length} paper${list.length === 1 ? '' : 's'}</span></div>
+        <span class="chip chip-soft">${icon('calendar')} ${esc(examCountdown(list[0]))}</span>
+      </header>
+      <div class="exam-list">${list.map(e => {
+        const unit = DB.unit(e.unitCode) || {};
+        const programme = programmeFor(e.programme);
+        return `<article class="exam-row" style="--tt-accent:hsl(${programmeHue(e.programme)} 52% 42%)">
+          <div class="exam-time"><strong>${esc(e.start)}</strong><span>${esc(e.end)}</span></div>
+          <div class="exam-main"><strong>${esc(e.unitCode)} · ${esc(unit.title || '')}</strong><span>${esc(programme ? programme.short : e.programme)} · ${esc(e.venue)}</span></div>
+          <div class="exam-side"><span class="chip chip-soft">${esc(e.type)}</span>${user.role === 'student' ? '' : `<span class="exam-prog">${esc(e.programme)}</span>`}</div>
+        </article>`;
+      }).join('')}</div>
+    </section>`;
+  }).join('');
+}
+
+function examClashReport(exams) {
+  const sessions = {};
+  exams.forEach(e => {
+    const key = `${e.date} ${e.start}`;
+    (sessions[key] = sessions[key] || []).push(e);
+  });
+  const clashes = [];
+  Object.keys(sessions).sort().forEach(key => {
+    const rooms = {};
+    const programmes = {};
+    sessions[key].forEach(e => {
+      if (rooms[e.venue]) clashes.push(`${e.unitCode} and ${rooms[e.venue].unitCode} are both booked in ${e.venue} on ${examDayLabel(e.date)} at ${e.start}.`);
+      rooms[e.venue] = e;
+      if (programmes[e.programme]) clashes.push(`${e.unitCode} and ${programmes[e.programme].unitCode} are both ${e.programme} papers on ${examDayLabel(e.date)} at ${e.start}.`);
+      programmes[e.programme] = e;
+    });
+  });
+  return clashes;
+}
+
+function clashPanelHTML(exams) {
+  const clashes = examClashReport(exams);
+  return `<div class="card clash-card">
+    <div class="card-head"><div><h2>Examination clash check</h2><p class="card-sub">Venue and programme conflicts across ${exams.length} paper${exams.length === 1 ? '' : 's'}</p></div><span class="badge ${clashes.length ? 'badge-danger' : 'badge-success'}">${clashes.length ? clashes.length + ' issue' + (clashes.length === 1 ? '' : 's') : 'No clashes'}</span></div>
+    ${clashes.length
+      ? `<ul class="clash-list">${clashes.map(c => `<li>${icon('alert')} <span>${esc(c)}</span></li>`).join('')}</ul>`
+      : `<div class="inline-success">${icon('checkCircle')} Each programme sits one paper per session and every venue is used once per session.</div>`}
+  </div>`;
+}
+
+function renderTimetable(user) {
+  const tab = PORTAL_STATE.timetable.tab === 'exams' ? 'exams' : 'classes';
+  const { units, exams } = timetableData(user);
+  const classes = units.filter(u => TT_DAYS.includes(u.day));
+  const next = exams.find(e => new Date(`${e.date}T${e.start}:00`).getTime() > Date.now());
+  const canFilter = user.role !== 'student';
+  const canOversee = isExecRole(user.role) || ['principal', 'registrar', 'exam_officer'].includes(user.role);
+  const programmeCodes = Array.from(new Set(timetableScope(user).map(u => u.programme))).sort();
+  const scopeCodes = new Set(timetableScope(user).map(u => u.code));
+  const scopeExams = EXAM_CALENDAR.filter(e => scopeCodes.has(e.unitCode));
+  const programmeFilter = canFilter && programmeCodes.length > 1
+    ? `<select class="control" id="timetable-programme" aria-label="Filter by programme"><option value="all" ${PORTAL_STATE.timetable.programme === 'all' ? 'selected' : ''}>All programmes</option>${programmeCodes.map(code => { const p = programmeFor(code); return `<option value="${esc(code)}" ${PORTAL_STATE.timetable.programme === code ? 'selected' : ''}>${esc(code)} · ${esc(p.short)}</option>`; }).join('')}</select>`
+    : '';
+  const actions = `${programmeFilter}<button type="button" class="btn btn-ghost btn-sm" data-action="download-ics" ${exams.length ? '' : 'disabled'}>${icon('download')} Add exams to calendar</button>`;
+  const subtitle = user.role === 'student'
+    ? `${esc(DB.data.meta.termLabel)} · ${esc(programmeFor(user.programme).name)} · Semester ${esc(user.semester || 1)}`
+    : user.role === 'lecturer'
+      ? 'Your weekly teaching schedule and exam-room duty'
+      : 'Weekly classes and the end-of-term examination calendar';
+  return `${pageHead(I18N.t('Timetable & exams'), subtitle, actions)}
+  <div class="stats-grid three">
+    ${statCard('Weekly classes', String(classes.length), `${units.length} unit${units.length === 1 ? '' : 's'} in view`, 'calendar', 'green')}
+    ${statCard('Exam papers', String(exams.length), EXAM_WINDOW.label, 'file', 'maroon')}
+    ${statCard('Next paper', next ? fmtShort(next.date) : '—', next ? `${next.unitCode} · ${next.start} · ${next.venue}` : 'No papers scheduled', 'clock', next ? 'amber' : '')}
+  </div>
+  <div class="tt-toolbar">
+    <div class="segmented tt-tabs">
+      <button type="button" class="segment ${tab === 'classes' ? 'active' : ''}" data-action="timetable-tab" data-tab="classes">${icon('calendar')} Weekly classes</button>
+      <button type="button" class="segment ${tab === 'exams' ? 'active' : ''}" data-action="timetable-tab" data-tab="exams">${icon('file')} Exam calendar</button>
+    </div>
+    <span class="chip chip-soft">${icon('info')} ${esc(DB.data.meta.termLabel)}</span>
+  </div>
+  ${!units.length
+    ? `<div class="card">${emptyState('calendar', 'Nothing scheduled yet', user.role === 'student' ? 'Register units for the current term to see your classes and exam papers.' : 'Units in this view will appear once the academic office publishes the term allocation.', user.role === 'student' ? `<a class="btn btn-primary" href="#/units">${icon('book')} ${esc(I18N.t('My units'))}</a>` : '')}</div>`
+    : tab === 'classes'
+      ? `<div class="card tt-card">${weeklyGridHTML(classes)}</div>
+        <p class="page-note">${icon('info')} Classes run Monday to Friday. Lecture rooms and times are published by the academic registry; report any change to your campus administration.</p>`
+      : `${exams.length
+        ? `<div class="card exam-card">
+            <div class="card-head"><div><h2>Examination calendar</h2><p class="card-sub">${esc(EXAM_WINDOW.label)} · two-hour papers · arrive 15 minutes early with your student ID</p></div><span class="chip chip-soft">${exams.length} papers</span></div>
+            ${examCalendarHTML(exams, user)}
+          </div>`
+        : `<div class="card">${emptyState('file', 'No examinations scheduled', 'Exam papers appear here once the examinations office publishes the timetable for these units.')}</div>`}
+        ${canOversee && scopeExams.length ? clashPanelHTML(scopeExams) : ''}
+        <p class="page-note">${icon('download')} Use “Add exams to calendar” to download a .ics file with a reminder 12 hours before each paper. It opens in Outlook, Google Calendar or the calendar app on your phone.</p>`}`;
 }
 
 /* ---------------- Team & notifications ---------------- */

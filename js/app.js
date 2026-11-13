@@ -1,15 +1,15 @@
 /* TSMHST Portal — routing, interactions, settings, permissions and PWA */
 const ACCESS = {
-  student: ['home', 'units', 'assignments', 'results', 'transcript', 'attendance', 'fees', 'hostel', 'team', 'about', 'settings', 'notifications'],
-  lecturer: ['home', 'units', 'assignments', 'marks', 'attendance', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  student: ['home', 'units', 'assignments', 'results', 'transcript', 'attendance', 'timetable', 'fees', 'hostel', 'team', 'about', 'settings', 'notifications'],
+  lecturer: ['home', 'units', 'assignments', 'marks', 'attendance', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
   owner: ['settings'],
-  director: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  deputy_director: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  general_admin: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  principal: ['home', 'approvals', 'users', 'payments', 'academics', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  director: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  deputy_director: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  general_admin: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  principal: ['home', 'approvals', 'users', 'payments', 'academics', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
   campus_admin: ['home', 'approvals', 'users', 'payments', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  registrar: ['home', 'academics', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  exam_officer: ['home', 'marks', 'academics', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  registrar: ['home', 'academics', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  exam_officer: ['home', 'marks', 'academics', 'timetable', 'announcements', 'team', 'about', 'settings', 'notifications'],
   qa_officer: ['home', 'quality', 'campuses', 'announcements', 'team', 'about', 'settings', 'notifications'],
   accounts_clerk: ['home', 'finance', 'announcements', 'team', 'about', 'settings', 'notifications'],
   secretary: ['home', 'announcements', 'team', 'about', 'settings', 'notifications'],
@@ -159,6 +159,11 @@ function bindGlobalEvents() {
       }
       if (t.id === 'att-unit') {
         PORTAL_STATE.attendance.unitCode = t.value;
+        render();
+        return;
+      }
+      if (t.id === 'timetable-programme') {
+        PORTAL_STATE.timetable.programme = t.value;
         render();
         return;
       }
@@ -482,6 +487,14 @@ async function handleAction(action, el, event) {
       filterCourses();
       return;
     }
+    case 'timetable-tab':
+      PORTAL_STATE.timetable.tab = el.dataset.tab === 'exams' ? 'exams' : 'classes';
+      render();
+      return;
+    case 'download-ics':
+      if (!user) return;
+      downloadExamICS(user);
+      return;
     case 'print':
       window.print();
       return;
@@ -549,6 +562,7 @@ async function handleSignin(form) {
   lastUnread = DB.unreadCount(result.user);
   PORTAL_STATE.marks = { unitCode: null, sort: 'admission', order: null };
   PORTAL_STATE.attendance = { unitCode: null };
+  PORTAL_STATE.timetable = { tab: 'classes', programme: 'all' };
   toast('Welcome, ' + result.user.name.split(' ')[0] + '.', 'success');
   if (location.hash === '#/home') render(); else location.hash = '#/home';
 }
@@ -1188,6 +1202,55 @@ function filterCourses() {
     group.hidden = visible === 0;
     if (q) group.open = true;
   });
+}
+
+/* ---------------- Calendar export ---------------- */
+
+function icsEscape(value) {
+  return String(value || '').replace(/\\/g, '\\\\').replace(/;/g, '\\;').replace(/,/g, '\\,').replace(/\r?\n/g, '\\n');
+}
+
+function icsLocalStamp(date, time) {
+  return String(date).replace(/-/g, '') + 'T' + String(time || '00:00').replace(':', '') + '00';
+}
+
+function downloadExamICS(user) {
+  const { exams } = timetableData(user);
+  if (!exams.length) { toast('No exam papers to export yet.', 'info'); return; }
+  const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d{3}/, '');
+  const lines = [
+    'BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//TSMHST//Portal//EN', 'CALSCALE:GREGORIAN',
+    'METHOD:PUBLISH', 'X-WR-CALNAME:TSMHST exam calendar', 'X-WR-TIMEZONE:Africa/Nairobi'
+  ];
+  exams.forEach(e => {
+    const unit = DB.unit(e.unitCode) || {};
+    const programme = programmeFor(e.programme);
+    lines.push(
+      'BEGIN:VEVENT',
+      `UID:${e.unitCode}-${e.date.replace(/-/g, '')}-${e.start.replace(':', '')}@tsmhst.ac.ke`,
+      `DTSTAMP:${stamp}`,
+      `DTSTART:${icsLocalStamp(e.date, e.start)}`,
+      `DTEND:${icsLocalStamp(e.date, e.end)}`,
+      `SUMMARY:${icsEscape(e.unitCode + ' — ' + (unit.title || 'Examination'))}`,
+      `LOCATION:${icsEscape(e.venue + ', TSMHST')}`,
+      `DESCRIPTION:${icsEscape((programme ? programme.name : e.programme) + ' · ' + e.type + ' · ' + DB.data.meta.termLabel + ' · Arrive 15 minutes early with your student ID.')}`,
+      'BEGIN:VALARM', 'TRIGGER:-PT12H', 'ACTION:DISPLAY',
+      `DESCRIPTION:${icsEscape(e.unitCode + ' examination tomorrow at ' + e.start)}`,
+      'END:VALARM',
+      'END:VEVENT'
+    );
+  });
+  lines.push('END:VCALENDAR');
+  const blob = new Blob([lines.join('\r\n')], { type: 'text/calendar;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `tsmhst-exams-${DB.data.meta.termCode}.ics`;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+  toast(`${exams.length} exam paper${exams.length === 1 ? '' : 's'} exported to your calendar.`, 'success');
 }
 
 /* ---------------- PWA ---------------- */

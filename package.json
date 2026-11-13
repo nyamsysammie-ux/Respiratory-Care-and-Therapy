@@ -1,0 +1,8 @@
+{
+  "name": "tsmhst-portal",
+  "version": "1.4.0",
+  "private": true,
+  "description": "Student and staff portal for Tricent School of Medical Health Science and Technology (TSMHST).",
+  "homepage": "https://www.tsmhst.ac.ke",
+  "license": "UNLICENSED"
+}

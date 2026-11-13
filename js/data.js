@@ -3,7 +3,7 @@ const APP = {
   name: 'TSMHST Portal',
   school: 'Tricent School of Medical Health Science and Technology',
   short: 'TSMHST',
-  version: '1.3.1',
+  version: '1.4.0',
   build: '13 November 2026',
   domain: 'www.tsmhst.ac.ke',
   websiteUrl: 'https://www.tsmhst.ac.ke',
@@ -216,6 +216,54 @@ const UNIT_DEFS = [
 ];
 
 const UNITS = UNIT_DEFS.map(u => Object.assign({ current: true, termCode: '2026-T3', termLabel: 'September – December 2026' }, u));
+
+/* End-of-term examination calendar. Papers are generated from the current unit
+   allocation so the schedule always matches what is taught this term. No
+   programme sits two papers in one session and no venue is double-booked. */
+const EXAM_SESSIONS = [
+  { start: '09:00', end: '11:00' },
+  { start: '11:30', end: '13:30' },
+  { start: '14:00', end: '16:00' }
+];
+const EXAM_VENUES = ['Main Hall', 'LH 1', 'LH 2', 'LH 3', 'Science Lab 1'];
+const EXAM_WINDOW = { start: '2026-12-07', end: '2026-12-10', label: '7 – 10 December 2026' };
+
+const EXAM_CALENDAR = (function buildExamCalendar() {
+  const days = [];
+  const cursor = new Date('2026-12-07T00:00:00');
+  while (days.length < 4) {
+    const dow = cursor.getDay();
+    if (dow !== 0 && dow !== 6) {
+      days.push({
+        date: `${cursor.getFullYear()}-${String(cursor.getMonth() + 1).padStart(2, '0')}-${String(cursor.getDate()).padStart(2, '0')}`
+      });
+    }
+    cursor.setDate(cursor.getDate() + 1);
+  }
+  const queue = UNITS.filter(u => u.current).map(u => u.code);
+  const calendar = [];
+  const maxPapersPerSession = 3;
+  let slot = 0;
+  while (queue.length) {
+    const session = EXAM_SESSIONS[slot % EXAM_SESSIONS.length];
+    const day = days[Math.floor(slot / EXAM_SESSIONS.length) % days.length];
+    const seated = new Set();
+    let venue = 0;
+    for (let i = 0; i < queue.length && seated.size < maxPapersPerSession;) {
+      const unit = UNITS.find(u => u.code === queue[i]);
+      if (seated.has(unit.programme)) { i++; continue; }
+      queue.splice(i, 1);
+      seated.add(unit.programme);
+      calendar.push({
+        unitCode: unit.code, programme: unit.programme, date: day.date,
+        start: session.start, end: session.end,
+        venue: EXAM_VENUES[venue++ % EXAM_VENUES.length], type: 'Main exam'
+      });
+    }
+    slot++;
+  }
+  return calendar;
+})();
 
 const HOSTELS = [
   { id: 'HST', name: 'TSMHST Hostel', room: 'Shared room', perTerm: 16000, description: 'Shared room with study desk, Wi-Fi and shared washrooms. Meals optional.' }
