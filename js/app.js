@@ -375,6 +375,9 @@ async function handleAction(action, el, event) {
     case 'edit-profile':
       openProfileModal();
       return;
+    case 'open-password':
+      openPasswordModal();
+      return;
     case 'mark-read':
       DB.markNoticesRead();
       lastUnread = 0;
@@ -569,7 +572,7 @@ async function handleRegister(form) {
     password,
     admissionNo: String(fd.get('admissionNo') || '').trim(),
     programme: String(fd.get('programme') || 'DCH6'),
-    year: String(fd.get('year') || '1'),
+    semester: String(fd.get('semester') || '1'),
     campus: staff ? String(fd.get('campus') || 'Nairobi') : String(fd.get('staffCampus') || 'Nairobi'),
     staffNo: String(fd.get('staffNo') || '').trim(),
     department: String(fd.get('department') || DEPARTMENTS[0])
@@ -826,12 +829,24 @@ function openRatingModal() {
 function openProfileModal() {
   const user = DB.currentUser();
   if (!user) return;
+  const lockedName = user.role === 'student';
   modal('Edit profile', `<form data-form="edit-profile" class="form-grid">
-    <label class="field form-span"><span>${esc(I18N.t('Full name'))}</span><input name="name" value="${esc(user.name)}" required></label>
+    <label class="field form-span"><span>${esc(I18N.t('Full name'))}</span><input name="name" value="${esc(user.name)}" required ${lockedName ? 'disabled' : ''}></label>
     <label class="field"><span>${esc(I18N.t('Email'))}</span><input value="${esc(user.email)}" disabled></label>
     <label class="field"><span>${esc(I18N.t('Phone number'))}</span><input name="phone" value="${esc(user.phone || '')}" placeholder="+254 7xx xxx xxx"></label>
     <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} ${esc(I18N.t('Save'))}</button></div>
-  </form><p class="demo-note">${icon('info')} Contact the administrator if your admission number, programme or email needs changing.</p>`);
+  </form><p class="demo-note">${icon('info')} ${lockedName ? 'Your name is locked to your admission record. Contact the Registrar to correct it. ' : ''}Contact the administrator if your admission number, programme or email needs changing.</p>`);
+}
+
+function openPasswordModal() {
+  const user = DB.currentUser();
+  if (!user) return;
+  modal('Change password', `<form data-form="change-password" class="form-grid">
+    <label class="field form-span"><span>Current password</span><input type="password" name="currentPassword" required autocomplete="current-password"></label>
+    <label class="field"><span>New password</span><input type="password" name="newPassword" required minlength="6" autocomplete="new-password"></label>
+    <label class="field"><span>Confirm new password</span><input type="password" name="confirmPassword" required minlength="6" autocomplete="new-password"></label>
+    <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('lock')} Save new password</button></div>
+  </form><p class="demo-note">${icon('info')} Use at least 6 characters. You will sign in with the new password from now on.</p>`);
 }
 
 /* ---------------- Settings modals & permissions ---------------- */
@@ -1105,11 +1120,31 @@ async function handleSubmit(form) {
   if (kind === 'edit-profile') {
     const name = String(fd.get('name') || '').trim();
     const phone = String(fd.get('phone') || '').trim();
-    if (!name) { toast('Name cannot be empty.', 'error'); return; }
-    user.name = name;
+    if (user.role !== 'student') {
+      if (!name) { toast('Name cannot be empty.', 'error'); return; }
+      user.name = name;
+    }
     user.phone = phone;
     DB.save();
     toast('Profile updated.', 'success');
+    closeModal();
+    render();
+    return;
+  }
+
+  if (kind === 'change-password') {
+    const current = String(fd.get('currentPassword') || '');
+    const next = String(fd.get('newPassword') || '');
+    const confirm = String(fd.get('confirmPassword') || '');
+    if (next !== confirm) { toast('The new passwords do not match.', 'error'); return; }
+    const result = await DB.changePassword(user.id, current, next);
+    const errors = {
+      current: 'Your current password is not correct.',
+      weak: 'Use a new password with at least 6 characters.',
+      same: 'Choose a password different from your current one.'
+    };
+    if (result.error) { toast(errors[result.error] || 'The password could not be changed.', 'error'); return; }
+    toast('Password changed successfully.', 'success');
     closeModal();
     render();
     return;

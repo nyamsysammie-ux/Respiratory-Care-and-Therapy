@@ -134,6 +134,16 @@ const DB = {
       meta.marksVersion = 1;
       this.save();
     }
+    if (!meta.semesterVersion) {
+      this.data.users.forEach(u => {
+        if (u.role !== 'student') return;
+        u.semester = Number(u.semester) || ((Number(u.year) || 1) - 1) * 3 + 1;
+        u.semester = Math.min(9, Math.max(1, u.semester));
+        u.year = Math.ceil(u.semester / 3);
+      });
+      meta.semesterVersion = 1;
+      this.save();
+    }
     await this.ensureStaffAccounts();
   },
 
@@ -201,7 +211,7 @@ const DB = {
       users.push({
         id: 'u_stu' + (i + 1), name, role: 'student', title: 'Student, Community Health',
         email, phone: '+2547' + String(10000000 + i * 111111).slice(0, 8),
-        admissionNo, programme: 'DCH6', year: 1, campus: CAMPUSES[i % CAMPUSES.length],
+        admissionNo, programme: 'DCH6', semester: 1, year: 1, campus: CAMPUSES[i % CAMPUSES.length],
         department: 'Department of Health Sciences', status: 'active', createdAt,
         password: await hashPassword('Student@2026', salt), salt,
         settings: deepCopy(DEFAULT_SETTINGS)
@@ -380,6 +390,7 @@ const DB = {
         paybillsVersion: 2,
         rolesVersion: 1,
         marksVersion: 1,
+        semesterVersion: 1,
         nextAdmissionSeq: 13
       },
       users, units: deepCopy(UNITS), registrations, marks, invoices, payments,
@@ -427,6 +438,20 @@ const DB = {
     return { user };
   },
 
+  async changePassword(userId, currentPassword, newPassword) {
+    const user = this.data.users.find(u => u.id === userId);
+    if (!user) return { error: 'missing' };
+    const currentHash = await hashPassword(String(currentPassword || ''), user.salt);
+    if (currentHash !== user.password) return { error: 'current' };
+    if (String(newPassword || '').length < 6) return { error: 'weak' };
+    if (String(newPassword) === String(currentPassword || '')) return { error: 'same' };
+    const salt = randomSalt();
+    user.salt = salt;
+    user.password = await hashPassword(newPassword, salt);
+    this.save();
+    return { ok: true };
+  },
+
   logout() {
     const user = this.currentUser();
     if (user) {
@@ -466,7 +491,8 @@ const DB = {
     if (user.role === 'student') {
       user.admissionNo = admissionNo;
       user.programme = payload.programme || 'DCH6';
-      user.year = Number(payload.year) || 1;
+      user.semester = Math.min(9, Math.max(1, Number(payload.semester) || 1));
+      user.year = Math.ceil(user.semester / 3);
       user.campus = payload.campus || 'Nairobi';
       user.department = programmeFor(user.programme).dept;
       user.title = 'Student, ' + programmeFor(user.programme).short;

@@ -782,12 +782,20 @@ function renderSettings(user) {
       <p class="setting-note">College customer care: ${esc(APP.officePhoneDisplay)} · ${esc(APP.officeEmail)} · ${esc(APP.domain)} · ${esc(APP.address)}. Portal support: ${esc(APP.supportEmail)} · WhatsApp ${esc(APP.supportPhoneDisplay)}. For official academic records contact the Registrar.</p>
     </section>
 
+    <section class="card settings-card">
+      <div class="card-head"><div><h2>Sign-in &amp; security</h2><p class="card-sub">Password for this portal account</p></div>${icon('lock')}</div>
+      <div class="setting-row">
+        <div class="setting-label"><strong>Password</strong><span>Use at least 6 characters. Changing it signs in with the new password next time.</span></div>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="open-password">Change password</button>
+      </div>
+    </section>
+
     <section class="card settings-card span-two">
       <div class="card-head"><div><h2>${esc(I18N.t('Account'))}</h2><p class="card-sub">Your profile and sign-in details</p></div><button type="button" class="btn btn-ghost btn-sm" data-action="edit-profile">${icon('user')} Edit profile</button></div>
       <div class="account-strip">
         ${avatar(user)}
         <div class="account-copy"><strong>${esc(user.name)}</strong><span>${esc(roleLabel(user.role))} · ${esc(user.admissionNo || user.staffNo || user.email)}</span><small>${esc(user.email)}${user.phone ? ' · ' + esc(user.phone) : ''}</small></div>
-        <div class="account-meta">${user.programme ? `<span>${esc(programmeFor(user.programme).name)}</span>` : user.department ? `<span>${esc(user.department)}</span>` : ''}<span>${esc(user.campus || '')}</span></div>
+        <div class="account-meta">${user.programme ? `<span>${esc(programmeFor(user.programme).name)}</span><span>Semester ${esc(user.semester || 1)}</span>` : user.department ? `<span>${esc(user.department)}</span>` : ''}<span>${esc(user.campus || '')}</span></div>
       </div>
       <div class="account-actions">
         <button type="button" class="btn btn-danger-ghost" data-action="logout">${icon('logout')} ${esc(I18N.t('Sign out of portal'))}</button>

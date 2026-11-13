@@ -390,9 +390,10 @@ function authPage() {
                 const list = PORTAL_PROGRAMMES.filter(p => p.dept === d);
                 return list.length ? `<optgroup label="${esc(d)}">${list.map(p => `<option value="${p.code}">${esc(p.name)}</option>`).join('')}</optgroup>` : '';
               }).join('')}</select></label>
-              <label class="field"><span>${esc(I18N.t('Year of study'))}</span><select name="year"><option value="1">Year 1</option><option value="2">Year 2</option><option value="3">Year 3</option></select></label>
+              <label class="field"><span>${esc(I18N.t('Semester'))}</span><select name="semester">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<option value="${n}">Semester ${n}</option>`).join('')}</select></label>
               <label class="field"><span>${esc(I18N.t('Campus'))}</span><select name="campus">${CAMPUSES.map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
             </div>
+            <p class="form-note">Tricent runs three semesters per academic year — choose your current semester from 1 to 9.</p>
           </div>
           <div class="reg-lecturer-fields" hidden>
             <div class="form-grid two">
@@ -541,7 +542,7 @@ function renderHome(user) {
     .filter(a => !DB.submissionFor(a.id, user.id))
     .sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt)).slice(0, 3);
 
-  return `${pageHead(`${greeting()}, ${firstName}`, `${esc(user.admissionNo)} · ${esc(programmeFor(user.programme).name)}`,
+  return `${pageHead(`${greeting()}, ${firstName}`, `${esc(user.admissionNo)} · ${esc(programmeFor(user.programme).name)} · Semester ${esc(user.semester || (Number(user.year) || 1) * 3 - 2)}`,
     `<a class="btn btn-primary btn-sm" href="#/attendance">${icon('check')} ${esc(I18N.t('Sign attendance'))}</a>`)}
   <div class="hero-card student-hero">
     <div class="hero-copy">
