@@ -1382,6 +1382,31 @@ function clashPanelHTML(exams) {
   </div>`;
 }
 
+function timetableDocumentCard(user) {
+  const canPublish = canPublishTimetable(user);
+  const rows = Object.keys(TIMETABLE_DOC_SLOTS).map(slot => {
+    const meta = TIMETABLE_DOC_SLOTS[slot];
+    const doc = DB.timetableDocument(slot, user);
+    const detail = doc
+      ? `${doc.title} · ${fmtDate(doc.createdAt)} · ${documentSizeLabel(doc)}`
+      : canPublish ? 'Nothing published yet — upload the file for this term' : 'Not published for this term yet';
+    return `<div class="task-row doc-slot-row">
+      <span class="task-icon">${icon(slot === 'exam' ? 'file' : 'calendar')}</span>
+      <span class="task-copy"><strong>${esc(meta.label)}</strong><small>${esc(detail)}</small></span>
+      <span class="doc-slot-actions">
+        ${doc ? `<button type="button" class="btn btn-ghost btn-sm" data-action="document-open" data-document="${doc.id}">${icon('eye')} Open</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="document-download" data-document="${doc.id}">${icon('download')} Download</button>` : ''}
+        ${canPublish ? `<button type="button" class="btn ${doc ? 'btn-ghost' : 'btn-primary'} btn-sm" data-action="timetable-upload" data-slot="${slot}">${icon('plus')} ${doc ? 'Replace' : 'Upload'}</button>` : ''}
+      </span>
+    </div>`;
+  }).join('');
+  return `<div class="card doc-slot-card">
+    <div class="card-head"><div><h2>${canPublish ? 'Timetable documents' : 'Published timetables'}</h2><p class="card-sub">${canPublish ? 'Add the class and examination timetable as files — students and staff open them offline' : 'Open or download the class and examination timetable for this term'}</p></div>${icon('file')}</div>
+    <div class="task-list">${rows}</div>
+    ${canPublish ? `<p class="page-note">${icon('info')} Files go to the document vault under “Timetable”. A new upload replaces the one shown here; earlier versions stay in the vault.</p>` : ''}
+  </div>`;
+}
+
 function renderTimetable(user) {
   const tab = PORTAL_STATE.timetable.tab === 'exams' ? 'exams' : 'classes';
   const { units, exams } = timetableData(user);
@@ -1407,6 +1432,7 @@ function renderTimetable(user) {
     ${statCard('Exam papers', String(exams.length), EXAM_WINDOW.label, 'file', 'maroon')}
     ${statCard('Next paper', next ? fmtShort(next.date) : '—', next ? `${next.unitCode} · ${next.start} · ${next.venue}` : 'No papers scheduled', 'clock', next ? 'amber' : '')}
   </div>
+  ${timetableDocumentCard(user)}
   <div class="tt-toolbar">
     <div class="segmented tt-tabs">
       <button type="button" class="segment ${tab === 'classes' ? 'active' : ''}" data-action="timetable-tab" data-tab="classes">${icon('calendar')} Weekly classes</button>

@@ -526,6 +526,32 @@ async function handleAction(action, el, event) {
     case 'document-upload':
       openDocumentModal();
       return;
+    case 'timetable-upload': {
+      if (!user || !canPublishTimetable(user)) return;
+      const slot = el.dataset.slot === 'exam' ? 'exam' : 'class';
+      openDocumentModal({
+        slot,
+        category: 'Timetable',
+        title: TIMETABLE_DOC_SLOTS[slot].label + ' — ' + DB.data.meta.termLabel
+      });
+      return;
+    }
+    case 'results-upload': {
+      if (!user || !canPublishResults(user) || isExecRole(user.role)) return;
+      const unit = DB.data.units.find(u => u.code === el.dataset.unit);
+      if (!unit) return;
+      if (user.role === 'lecturer' && !DB.unitsForLecturer(user.id).some(u => u.code === unit.code)) return;
+      openDocumentModal({
+        slot: 'results',
+        category: 'Results',
+        audience: 'students',
+        unitCode: unit.code,
+        termCode: DB.data.meta.termCode,
+        title: 'Results — ' + unit.code + ' · ' + unit.title,
+        summary: unit.code + ' · ' + unit.title + ' · ' + DB.data.meta.termLabel
+      });
+      return;
+    }
     case 'document-open':
       openDocumentRecord(el.dataset.document);
       return;
@@ -1200,9 +1226,13 @@ async function handleSubmit(form) {
       summary: String(fd.get('summary') || '').trim(),
       body: String(fd.get('body') || '').trim(),
       audience: String(fd.get('audience') || 'all'),
-      campus: String(fd.get('campus') || ALL_CAMPUSES)
+      campus: String(fd.get('campus') || ALL_CAMPUSES),
+      slot: String(fd.get('slot') || ''),
+      unitCode: String(fd.get('unitCode') || ''),
+      termCode: String(fd.get('termCode') || '')
     };
     if (!payload.title) { toast('Enter a title for the document.', 'error'); return; }
+    const isResultsUpload = payload.slot === 'results';
     if (attachment) {
       if (attachment.size > 800 * 1024) { toast('Attachments must be 800 KB or smaller.', 'error'); return; }
       payload.filename = attachment.name;
@@ -1210,12 +1240,18 @@ async function handleSubmit(form) {
       payload.size = attachment.size;
       payload.dataUrl = await readFileAsDataURL(attachment);
     }
+    if (isResultsUpload && !(attachment && (/\.pdf$/i.test(attachment.name) || payload.mime === 'application/pdf'))) {
+      toast('Attach the signed results sheet as a PDF.', 'error');
+      return;
+    }
     if (!payload.body && !payload.dataUrl) { toast('Add body text or attach a file.', 'error'); return; }
     const result = DB.addDocument(payload, user.id);
     if (result.error) { toast('Enter a title for the document.', 'error'); return; }
     closeModal();
     render();
-    toast('Document added to the vault.', 'success');
+    toast(isResultsUpload
+      ? 'Results sheet published. Students in this unit can open the PDF now.'
+      : payload.slot ? 'Timetable published. Students and staff can open it now.' : 'Document added to the vault.', 'success');
     return;
   }
 
@@ -1319,19 +1355,29 @@ function readFileAsDataURL(file) {
   });
 }
 
-function openDocumentModal() {
+function openDocumentModal(preset) {
   const user = DB.currentUser();
   if (!user || !isStaffRole(user.role)) return;
-  const campuses = user.campus === ALL_CAMPUSES ? [ALL_CAMPUSES].concat(CAMPUSES) : [user.campus];
-  modal('Add document', `<form data-form="new-document" class="form-grid">
-    <label class="field form-span"><span>Title</span><input name="title" required maxlength="90" placeholder="e.g. Examination regulations"></label>
-    <label class="field"><span>Category</span><select name="category">${DB.documentCategories().map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
-    <label class="field"><span>Audience</span><select name="audience"><option value="all">Everyone</option><option value="students">Students</option><option value="staff">Staff</option></select></label>
-    <label class="field form-span"><span>Campus</span><select name="campus">${campuses.map(c => `<option value="${esc(c)}">${esc(c)}</option>`).join('')}</select></label>
-    <label class="field form-span"><span>Summary</span><input name="summary" maxlength="130" placeholder="One line shown on the document card"></label>
+  preset = preset || {};
+  const slot = ['class', 'exam', 'results'].indexOf(preset.slot) === -1 ? '' : preset.slot;
+  const isResults = slot === 'results';
+  const category = DOCUMENT_CATEGORIES.indexOf(preset.category) === -1 ? 'Policy' : preset.category;
+  const campuses = user.campus === ALL_CAMPUSES || canPublishTimetable(user) ? [ALL_CAMPUSES].concat(CAMPUSES) : [user.campus];
+  const campusDefault = campuses.indexOf(preset.campus) !== -1 ? preset.campus : (slot && !isResults ? ALL_CAMPUSES : campuses[0]);
+  const audience = preset.audience === 'students' || preset.audience === 'staff' ? preset.audience : 'all';
+  const title = isResults ? 'Upload results sheet' : slot ? 'Upload ' + TIMETABLE_DOC_SLOTS[slot].label.toLowerCase() : 'Add document';
+  modal(title, `<form data-form="new-document" class="form-grid">
+    <input type="hidden" name="slot" value="${esc(slot)}">
+    <input type="hidden" name="unitCode" value="${esc(preset.unitCode || '')}">
+    <input type="hidden" name="termCode" value="${esc(preset.termCode || '')}">
+    <label class="field form-span"><span>Title</span><input name="title" required maxlength="90" placeholder="e.g. Examination regulations" value="${esc(preset.title || '')}"></label>
+    <label class="field"><span>Category</span><select name="category">${DB.documentCategories().map(c => `<option ${c === category ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
+    <label class="field"><span>Audience</span><select name="audience"><option value="all" ${audience === 'all' ? 'selected' : ''}>Everyone</option><option value="students" ${audience === 'students' ? 'selected' : ''}>Students</option><option value="staff" ${audience === 'staff' ? 'selected' : ''}>Staff</option></select></label>
+    <label class="field form-span"><span>Campus</span><select name="campus">${campuses.map(c => `<option value="${esc(c)}" ${c === campusDefault ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
+    <label class="field form-span"><span>Summary</span><input name="summary" maxlength="130" placeholder="One line shown on the document card" value="${esc(preset.summary || '')}"></label>
     <label class="field form-span"><span>Body text (optional when you attach a file)</span><textarea name="body" rows="5" placeholder="Paste the policy or notice text. Blank lines become paragraphs."></textarea></label>
-    <label class="field form-span"><span>Attach a file (optional, max 800 KB)</span><input type="file" name="file" accept=".pdf,.png,.jpg,.jpeg,.txt,.csv,.doc,.docx"></label>
-    <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('file')} Add to vault</button></div>
+    <label class="field form-span"><span>${isResults ? 'Attach the signed results sheet (PDF, max 800 KB)' : 'Attach a file (optional, max 800 KB)'}</span><input type="file" name="file" accept="${isResults ? 'application/pdf,.pdf' : '.pdf,.png,.jpg,.jpeg,.txt,.csv,.doc,.docx'}"></label>
+    <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon(isResults ? 'upload' : 'file')} ${isResults ? 'Publish results sheet' : slot ? 'Publish timetable' : 'Add to vault'}</button></div>
   </form><p class="demo-note">${icon('info')} Documents are saved on this device so students can read them offline. Large attachments fill the offline cache quickly.</p>`);
 }
 

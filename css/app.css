@@ -1871,6 +1871,17 @@ html[dir="rtl"] .notification-card.unread { border-left: 0; border-right: 4px so
 .doc-body p:last-child { margin-bottom: 0; }
 .doc-preview { display: block; width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--line); }
 
+/* ---------- Document slots (timetables, results sheets) ---------- */
+.doc-slot-card { margin-bottom: 1rem; }
+.doc-slot-row { gap: .75rem; }
+.doc-slot-actions { display: flex; flex-wrap: wrap; gap: .35rem; justify-content: flex-end; flex: 0 0 auto; }
+.doc-slot-actions .btn { white-space: nowrap; }
+
+@media (max-width: 620px) {
+  .doc-slot-row { flex-wrap: wrap; }
+  .doc-slot-actions { width: 100%; justify-content: flex-start; padding-left: 46px; }
+}
+
 /* ---------- Audit trail ---------- */
 .audit-list { display: grid; }
 .audit-row {

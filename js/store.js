@@ -5,7 +5,7 @@ const SEED_VERSION = 1;
 const CAT_MAX = 30;
 const EXAM_MAX = 70;
 const AUDIT_LIMIT = 400;
-const DOCUMENT_CATEGORIES = ['Policy', 'Examinations', 'Finance', 'Academic', 'Notice', 'Other'];
+const DOCUMENT_CATEGORIES = ['Policy', 'Examinations', 'Timetable', 'Results', 'Finance', 'Academic', 'Notice', 'Other'];
 const CAT_WEIGHT = 30;
 const EXAM_WEIGHT = 70;
 
@@ -1286,6 +1286,9 @@ const DB = {
       dataUrl: payload.dataUrl || '',
       audience: payload.audience === 'students' || payload.audience === 'staff' ? payload.audience : 'all',
       campus: payload.campus || ALL_CAMPUSES,
+      slot: ['class', 'exam', 'results'].indexOf(payload.slot) === -1 ? '' : payload.slot,
+      unitCode: String(payload.unitCode || '').trim().toUpperCase(),
+      termCode: payload.termCode || '',
       createdBy: userId || null,
       createdAt: isoAt(0)
     };
@@ -1294,6 +1297,20 @@ const DB = {
     this.save();
     this.recordAudit('document.add', 'Added "' + doc.title + '" to the document vault (' + doc.category + ', ' + audienceLabel(doc.audience) + ').');
     return { ok: true, document: doc };
+  },
+  timetableDocument(slot, user) {
+    const docs = (this.data.documents || []).filter(d => d.slot === slot);
+    return docs
+      .filter(d => !user || user.campus === ALL_CAMPUSES || !d.campus || d.campus === ALL_CAMPUSES || d.campus === user.campus)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+  },
+  resultSheet(unitCode, user) {
+    const code = String(unitCode || '').toUpperCase();
+    const term = this.data.meta.termCode;
+    return (this.data.documents || [])
+      .filter(d => d.slot === 'results' && d.unitCode === code && d.termCode === term)
+      .filter(d => !user || user.campus === ALL_CAMPUSES || !d.campus || d.campus === ALL_CAMPUSES || d.campus === user.campus)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
   },
   deleteDocument(id) {
     const doc = this.document(id);

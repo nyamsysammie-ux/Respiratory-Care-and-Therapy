@@ -14,6 +14,27 @@ function markFor(studentId, unitCode) {
   return DB.data.marks.find(m => m.studentId === studentId && m.unitCode === unitCode && m.termCode === DB.data.meta.termCode) || null;
 }
 
+function resultSheetCard(unit, user, readOnly) {
+  const canPublish = !readOnly && canPublishResults(user);
+  const doc = DB.resultSheet(unit.code, user);
+  const detail = doc
+    ? `${doc.title} · ${fmtDate(doc.createdAt)} · ${documentSizeLabel(doc)}`
+    : canPublish ? 'No results sheet uploaded for this unit this term' : 'The lecturer has not uploaded a results sheet for this term yet';
+  return `<div class="card doc-slot-card">
+    <div class="card-head"><div><h2>Results sheet (PDF)</h2><p class="card-sub">${esc(unit.code)} · ${esc(unit.title)} · ${esc(DB.data.meta.termLabel)}</p></div>${icon('file')}</div>
+    <div class="task-list"><div class="task-row doc-slot-row">
+      <span class="task-icon">${icon('file')}</span>
+      <span class="task-copy"><strong>Signed results sheet</strong><small>${esc(detail)}</small></span>
+      <span class="doc-slot-actions">
+        ${doc ? `<button type="button" class="btn btn-ghost btn-sm" data-action="document-open" data-document="${doc.id}">${icon('eye')} Open</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="document-download" data-document="${doc.id}">${icon('download')} Download</button>` : ''}
+        ${canPublish ? `<button type="button" class="btn ${doc ? 'btn-ghost' : 'btn-primary'} btn-sm" data-action="results-upload" data-unit="${esc(unit.code)}">${icon('upload')} ${doc ? 'Replace PDF' : 'Upload PDF'}</button>` : ''}
+      </span>
+    </div></div>
+    ${canPublish ? `<p class="page-note">${icon('info')} Upload the signed results sheet as a PDF. It is stored in the vault under “Results” and can be opened by this unit’s students and the examinations office.</p>` : ''}
+  </div>`;
+}
+
 function renderMarks(user) {
   if (!canManageMarks(user) && !isExecRole(user.role)) return renderHome(user);
   const readOnly = isExecRole(user.role);
@@ -60,6 +81,7 @@ function renderMarks(user) {
     </select></label>
     <select id="marks-unit" class="control" aria-label="Select unit">${units.map(u => `<option value="${u.code}" ${u.code === selected.code ? 'selected' : ''}>${esc(u.code)} · ${esc(u.title)}</option>`).join('')}</select>
   </div>
+  ${resultSheetCard(selected, user, readOnly)}
   <div class="card table-card marks-card">
     <div class="card-head"><div><h2>${esc(selected.title)}</h2><p class="card-sub">Enter CAT 1 (30), CAT 2 (30) and Exam (70). The CAT average plus the exam gives the total out of 100.</p></div><span class="chip chip-soft">${students.length} students</span></div>
     ${students.length ? `<div class="table-wrap"><table class="data-table marks-table">

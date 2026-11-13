@@ -3,7 +3,7 @@ const APP = {
   name: 'TSMHST Portal',
   school: 'Tricent School of Medical Health Science and Technology',
   short: 'TSMHST',
-  version: '1.5.0',
+  version: '1.6.0',
   build: '13 November 2026',
   domain: 'www.tsmhst.ac.ke',
   websiteUrl: 'https://www.tsmhst.ac.ke',
@@ -325,6 +325,16 @@ function isAdminRole(role) { return ADMIN_ROLES.indexOf(role) !== -1; }
 function isExecRole(role) { return EXEC_ROLES.indexOf(role) !== -1; }
 function isStaffRole(role) { return role === 'lecturer' || isAdminRole(role); }
 function isCampusRole(role) { return role === 'principal' || role === 'campus_admin' || role === 'registrar' || role === 'exam_officer' || role === 'qa_officer' || role === 'accounts_clerk' || role === 'secretary'; }
+const TIMETABLE_DOC_SLOTS = {
+  class: { label: 'Class timetable', hint: 'Weekly teaching timetable for the term' },
+  exam: { label: 'Examination timetable', hint: 'Exam dates, times and venues' }
+};
+function canPublishTimetable(user) {
+  return !!user && (isExecRole(user.role) || ['principal', 'registrar', 'exam_officer'].includes(user.role));
+}
+function canPublishResults(user) {
+  return !!user && (user.role === 'lecturer' || isExecRole(user.role) || ['principal', 'registrar', 'exam_officer'].includes(user.role));
+}
 function roleCodeFromLabel(label) {
   const all = ADMIN_ROLE_OPTIONS.concat(EXEC_ROLE_OPTIONS);
   const found = all.find(r => r.label === label || r.code === label);
