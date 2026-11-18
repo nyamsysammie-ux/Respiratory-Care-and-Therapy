@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<meta name="theme-color" content="#3f8f1f">
+<title>Sign in | TSMHST Portal</title>
+<style>
+  :root { --bg:#f3f7f0; --card:#fff; --text:#17210f; --muted:#5b6b50; --brand:#3f8f1f; --brand-text:#fff; --border:#cdd9c4; --err:#b3261e; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f150c; --card:#18200f; --text:#e8f0e1; --muted:#9db08f; --brand:#7ac143; --brand-text:#10200a; --border:#2f3d24; --err:#ff8a80; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center; background:var(--bg); color:var(--text); font:16px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; padding:16px; }
+  main { width:100%; max-width:380px; background:var(--card); border:1px solid var(--border); border-radius:14px; padding:24px; }
+  h1 { font-size:1.3rem; margin:0 0 4px; }
+  p.sub { margin:0 0 18px; color:var(--muted); font-size:.92rem; }
+  label { display:block; font-weight:600; font-size:.9rem; margin:12px 0 4px; }
+  input { width:100%; padding:11px 12px; font:inherit; color:inherit; background:transparent; border:1px solid var(--border); border-radius:8px; }
+  input:focus-visible, button:focus-visible { outline:3px solid var(--brand); outline-offset:1px; }
+  button { width:100%; margin-top:18px; padding:12px; font:inherit; font-weight:700; color:var(--brand-text); background:var(--brand); border:0; border-radius:8px; cursor:pointer; }
+  button[disabled] { opacity:.6; cursor:wait; }
+  .err { color:var(--err); min-height:1.4em; margin:12px 0 0; font-size:.92rem; }
+  [hidden] { display:none !important; }
+</style>
+</head>
+<body>
+<main>
+  <section id="signin">
+    <h1>TSMHST Portal</h1>
+    <p class="sub">Tricent School of Medical Health Science and Technology. Sign in to continue.</p>
+    <form id="f1" autocomplete="on">
+      <label for="u">Username</label>
+      <input id="u" name="username" autocomplete="username" autocapitalize="none" spellcheck="false" required>
+      <label for="p">Password</label>
+      <input id="p" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+    </form>
+  </section>
+
+  <section id="change" hidden>
+    <h1>Choose a new password</h1>
+    <p class="sub">For your security you must set your own password before continuing (at least 8 characters).</p>
+    <form id="f2">
+      <label for="c0">Current password</label>
+      <input id="c0" type="password" autocomplete="current-password" required>
+      <label for="c1">New password</label>
+      <input id="c1" type="password" autocomplete="new-password" minlength="8" required>
+      <label for="c2">Repeat new password</label>
+      <input id="c2" type="password" autocomplete="new-password" minlength="8" required>
+      <button type="submit">Save password</button>
+    </form>
+  </section>
+  <p class="err" id="err" role="alert"></p>
+</main>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var HDR = { "Content-Type": "application/json", "X-Requested-With": "portal" };
+
+  // If the last person signed out on this device, remove the downloaded files too.
+  try {
+    if (localStorage.getItem("mongo-sync.wipe") === "1") {
+      var dbs = JSON.parse(localStorage.getItem("mongo-sync.dbs") || "[]");
+      dbs.forEach(function (n) { try { indexedDB.deleteDatabase(n); } catch (e) {} });
+      localStorage.removeItem("mongo-sync.wipe");
+      localStorage.removeItem("mongo-sync.dbs");
+    }
+  } catch (e) {}
+
+  function next() {
+    var n = new URLSearchParams(location.search).get("next") || "/";
+    return /^\/(?![\/\\])/.test(n) ? n : "/";
+  }
+  function show(id) { $("signin").hidden = id !== "signin"; $("change").hidden = id !== "change"; $("err").textContent = ""; }
+  function fail(msg) { $("err").textContent = msg; }
+  function busy(form, on) { form.querySelector("button").disabled = on; }
+
+  function post(url, body) {
+    return fetch(url, { method: "POST", headers: HDR, body: JSON.stringify(body) }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) { return { ok: r.ok, status: r.status, j: j }; });
+    });
+  }
+
+  fetch("/api/auth/me", { headers: { "X-Requested-With": "portal" } }).then(function (r) { return r.ok ? r.json() : null; }).then(function (d) {
+    if (!d) return;
+    if (d.user.mustChange) { show("change"); $("c0").focus(); } else { location.replace(next()); }
+  }).catch(function () {});
+
+  $("f1").addEventListener("submit", function (e) {
+    e.preventDefault();
+    busy(this, true);
+    var form = this;
+    post("/api/auth/login", { username: $("u").value, password: $("p").value }).then(function (r) {
+      busy(form, false);
+      if (!r.ok) return fail(r.j.error || "Could not sign in");
+      if (r.j.user.mustChange) { $("c0").value = $("p").value; show("change"); $("c1").focus(); }
+      else location.replace(next());
+    }).catch(function () { busy(form, false); fail("Cannot reach the server. Check your internet and try again."); });
+  });
+
+  $("f2").addEventListener("submit", function (e) {
+    e.preventDefault();
+    if ($("c1").value !== $("c2").value) return fail("The two new passwords do not match.");
+    busy(this, true);
+    var form = this;
+    post("/api/auth/password", { current: $("c0").value, next: $("c1").value }).then(function (r) {
+      busy(form, false);
+      if (!r.ok) return fail(r.j.error || "Could not change the password");
+      location.replace(next());
+    }).catch(function () { busy(form, false); fail("Cannot reach the server."); });
+  });
+})();
+</script>
+</body>
+</html>

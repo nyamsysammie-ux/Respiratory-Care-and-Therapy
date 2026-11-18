@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="color-scheme" content="light dark">
+<title>Accounts | TSMHST Portal</title>
+<style>
+  :root { --bg:#f3f7f0; --card:#fff; --text:#17210f; --muted:#5b6b50; --brand:#3f8f1f; --brand-text:#fff; --border:#cdd9c4; --err:#b3261e; --ok:#2e7d32; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#0f150c; --card:#18200f; --text:#e8f0e1; --muted:#9db08f; --brand:#7ac143; --brand-text:#10200a; --border:#2f3d24; --err:#ff8a80; --ok:#9be59f; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif; padding:16px; }
+  .wrap { max-width:960px; margin:0 auto; }
+  header { display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  h1 { font-size:1.3rem; margin:0; }
+  h2 { font-size:1.05rem; margin:0 0 10px; }
+  a { color:var(--brand); }
+  section { background:var(--card); border:1px solid var(--border); border-radius:12px; padding:16px; margin-bottom:16px; }
+  .grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; align-items:end; }
+  label { display:block; font-weight:600; font-size:.85rem; margin-bottom:3px; }
+  input, select, textarea { width:100%; padding:8px 10px; font:inherit; color:inherit; background:transparent; border:1px solid var(--border); border-radius:8px; }
+  textarea { min-height:110px; font-family:ui-monospace,Menlo,Consolas,monospace; font-size:.85rem; }
+  button { padding:8px 12px; font:inherit; font-weight:600; border-radius:8px; border:1px solid var(--border); background:transparent; color:inherit; cursor:pointer; }
+  button.primary { background:var(--brand); color:var(--brand-text); border-color:var(--brand); }
+  button.danger { color:var(--err); }
+  button:focus-visible, input:focus-visible, select:focus-visible, textarea:focus-visible { outline:3px solid var(--brand); outline-offset:1px; }
+  .tablewrap { overflow-x:auto; }
+  table { border-collapse:collapse; width:100%; min-width:640px; }
+  th, td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--border); vertical-align:middle; }
+  th { font-size:.8rem; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  td .actions { display:flex; flex-wrap:wrap; gap:6px; }
+  .muted { color:var(--muted); font-size:.85rem; }
+  #msg { min-height:1.5em; font-weight:600; }
+  #msg.err { color:var(--err); } #msg.ok { color:var(--ok); }
+  .tag { display:inline-block; padding:1px 8px; border-radius:99px; border:1px solid var(--border); font-size:.78rem; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Accounts</h1>
+    <div><a href="/">Back to the portal</a></div>
+  </header>
+  <p id="msg" role="status"></p>
+
+  <section>
+    <h2>Add one account</h2>
+    <form id="add" class="grid">
+      <div><label for="a-user">Username</label><input id="a-user" required autocapitalize="none" spellcheck="false"></div>
+      <div><label for="a-name">Full name</label><input id="a-name"></div>
+      <div><label for="a-role">Role</label><select id="a-role"><option>student</option><option>lecturer</option><option>admin</option></select></div>
+      <div><label for="a-pass">Temporary password</label><input id="a-pass" minlength="8" required></div>
+      <div><button class="primary" type="submit">Create</button></div>
+    </form>
+    <p class="muted">The person must choose their own password the first time they sign in.</p>
+  </section>
+
+  <section>
+    <h2>Import many accounts (CSV)</h2>
+    <p class="muted">One person per line: <code>username,full name,role,temporary password</code>. A header line is fine. Role is student, lecturer or admin (default student).</p>
+    <textarea id="csv" placeholder="username,name,role,password&#10;stu001,Jane Wanjiru,student,Temp-2026-a1&#10;lec001,Dr Otieno,lecturer,Temp-2026-b2"></textarea>
+    <p><input type="file" id="csvfile" accept=".csv,text/csv,text/plain"> <button class="primary" id="import" type="button">Import</button></p>
+  </section>
+
+  <section>
+    <h2>All accounts <span class="muted" id="count"></span></h2>
+    <div class="tablewrap">
+      <table>
+        <thead><tr><th>Username</th><th>Name</th><th>Role</th><th>Status</th><th>Last sign-in</th><th>Actions</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </section>
+</div>
+
+<script>
+(function () {
+  var $ = function (id) { return document.getElementById(id); };
+  var HDR = { "Content-Type": "application/json", "X-Requested-With": "portal" };
+  var me = null;
+
+  function msg(text, cls) { var m = $("msg"); m.textContent = text; m.className = cls || ""; }
+
+  function api(method, url, body) {
+    return fetch(url, { method: method, headers: HDR, body: body ? JSON.stringify(body) : undefined }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (r.status === 401) { location.replace("/login.html?next=/accounts.html"); throw new Error("signed out"); }
+        if (!r.ok) throw new Error(j.error || ("Error " + r.status));
+        return j;
+      });
+    });
+  }
+
+  function cell(text) { var td = document.createElement("td"); td.textContent = text; return td; }
+  function btn(label, cls, fn) { var b = document.createElement("button"); b.textContent = label; if (cls) b.className = cls; b.onclick = fn; return b; }
+
+  function load() {
+    api("GET", "/api/admin/accounts").then(function (d) {
+      var tb = $("rows");
+      tb.textContent = "";
+      $("count").textContent = "(" + d.accounts.length + ")";
+      d.accounts.forEach(function (a) {
+        var tr = document.createElement("tr");
+        tr.appendChild(cell(a.username));
+        tr.appendChild(cell(a.name));
+        var tdRole = document.createElement("td");
+        var sel = document.createElement("select");
+        ["student", "lecturer", "admin"].forEach(function (r) { var o = document.createElement("option"); o.textContent = r; o.selected = r === a.role; sel.appendChild(o); });
+        sel.disabled = a.username === me;
+        sel.onchange = function () { act("PATCH", a.username, { role: sel.value }, "Role updated"); };
+        tdRole.appendChild(sel);
+        tr.appendChild(tdRole);
+        var status = a.disabled ? "disabled" : (a.mustChange ? "must set password" : "active");
+        var tdS = document.createElement("td"); var tag = document.createElement("span"); tag.className = "tag"; tag.textContent = status; tdS.appendChild(tag); tr.appendChild(tdS);
+        tr.appendChild(cell(a.lastLoginAt ? new Date(a.lastLoginAt).toLocaleString() : "never"));
+        var tdA = document.createElement("td"); var box = document.createElement("div"); box.className = "actions";
+        box.appendChild(btn("Reset password", "", function () {
+          var p = prompt("New temporary password for " + a.username + " (at least 8 characters):");
+          if (p) act("PATCH", a.username, { password: p }, "Password reset. They must choose a new one at next sign-in.");
+        }));
+        if (a.username !== me) {
+          box.appendChild(btn(a.disabled ? "Enable" : "Disable", "", function () { act("PATCH", a.username, { disabled: !a.disabled }, a.disabled ? "Account enabled" : "Account disabled"); }));
+          box.appendChild(btn("Delete", "danger", function () { if (confirm("Delete account " + a.username + "? This cannot be undone.")) act("DELETE", a.username, null, "Account deleted"); }));
+        }
+        tdA.appendChild(box); tr.appendChild(tdA);
+        tb.appendChild(tr);
+      });
+    }).catch(function (e) { msg(e.message, "err"); });
+  }
+
+  function act(method, username, body, okText) {
+    api(method, "/api/admin/accounts/" + encodeURIComponent(username), body).then(function () { msg(okText, "ok"); load(); }).catch(function (e) { msg(e.message, "err"); load(); });
+  }
+
+  $("add").addEventListener("submit", function (e) {
+    e.preventDefault();
+    api("POST", "/api/admin/accounts", { username: $("a-user").value, name: $("a-name").value, role: $("a-role").value, password: $("a-pass").value })
+      .then(function () { msg("Account created", "ok"); $("add").reset(); load(); })
+      .catch(function (er) { msg(er.message, "err"); });
+  });
+
+  // minimal CSV parser (handles quotes)
+  function parseCsv(text) {
+    var rows = [], row = [], cur = "", q = false, i, c;
+    for (i = 0; i < text.length; i++) {
+      c = text[i];
+      if (q) {
+        if (c === '"' && text[i + 1] === '"') { cur += '"'; i++; }
+        else if (c === '"') q = false;
+        else cur += c;
+      } else if (c === '"') q = true;
+      else if (c === ",") { row.push(cur); cur = ""; }
+      else if (c === "\n" || c === "\r") { if (c === "\r" && text[i + 1] === "\n") i++; row.push(cur); cur = ""; if (row.some(function (x) { return x.trim(); })) rows.push(row); row = []; }
+      else cur += c;
+    }
+    row.push(cur); if (row.some(function (x) { return x.trim(); })) rows.push(row);
+    return rows;
+  }
+
+  $("csvfile").addEventListener("change", function () {
+    var f = this.files[0]; if (!f) return;
+    var r = new FileReader(); r.onload = function () { $("csv").value = r.result; }; r.readAsText(f);
+  });
+
+  $("import").addEventListener("click", function () {
+    var rows = parseCsv($("csv").value);
+    if (rows.length && /^username$/i.test(rows[0][0].trim())) rows.shift();
+    var accounts = rows.map(function (r) { return { username: (r[0] || "").trim(), name: (r[1] || "").trim(), role: (r[2] || "student").trim().toLowerCase(), password: (r[3] || "").trim() }; });
+    if (!accounts.length) return msg("Nothing to import.", "err");
+    api("POST", "/api/admin/accounts/import", { accounts: accounts }).then(function (d) {
+      var t = d.created + " account(s) created.";
+      if (d.skipped.length) t += " Skipped " + d.skipped.length + ": " + d.skipped.slice(0, 5).map(function (s) { return (s.username || "(blank)") + " (" + s.reason + ")"; }).join("; ") + (d.skipped.length > 5 ? "..." : "");
+      msg(t, d.skipped.length ? "err" : "ok"); load();
+    }).catch(function (e) { msg(e.message, "err"); });
+  });
+
+  api("GET", "/api/auth/me").then(function (d) { me = d.user.username; load(); }).catch(function () {});
+})();
+</script>
+</body>
+</html>

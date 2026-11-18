@@ -1,92 +1,57 @@
-// Tricent MongoDB add-on: serves your app AND stores its data in MongoDB Atlas.
-require("dotenv").config();
+"use strict";
+// Tricent portal server: serves your app from /public and stores its data in MongoDB.
+const http = require("http");
 const path = require("path");
-const express = require("express");
+const { loadEnv } = require("./lib/env");
+
+loadEnv(path.join(__dirname, ".env"));
+
 const { MongoClient } = require("mongodb");
+const { createMongoDl } = require("./lib/mongo-dl");
+const { createApp } = require("./lib/app");
+const auth = require("./lib/auth");
+const config = require("./config");
 
 const PORT = process.env.PORT || 3000;
 const URI = process.env.MONGODB_URI;
 const DB_NAME = process.env.DB_NAME || "tricent";
-const SYNC_TOKEN = process.env.SYNC_TOKEN || ""; // optional extra check
 
 if (!URI) {
-  console.error("Missing MONGODB_URI. Add it to .env (local) or Render > Environment.");
+  console.error("Missing MONGODB_URI. Put it in .env (on your computer) or Render > Environment.");
   process.exit(1);
 }
 
-const app = express();
-app.use(express.json({ limit: "10mb" }));
+async function main() {
+  const client = new MongoClient(URI);
+  await client.connect();
+  console.log("Connected to MongoDB");
+  const dl = await createMongoDl(client, DB_NAME);
 
-const client = new MongoClient(URI);
-let kv; // collection: one document per localStorage key
-
-function checkToken(req, res, next) {
-  if (SYNC_TOKEN && req.get("x-sync-token") !== SYNC_TOKEN) {
-    return res.status(401).json({ error: "Unauthorized" });
+  // Create the first administrator if there are no accounts yet.
+  if ((await dl.accountCount()) === 0) {
+    const u = (process.env.ADMIN_USERNAME || "").trim().toLowerCase();
+    const p = process.env.ADMIN_PASSWORD || "";
+    if (u && p.length >= 8) {
+      await dl.accountCreate({
+        username: u,
+        name: "Administrator",
+        role: "admin",
+        passHash: await auth.hashPassword(p),
+        mustChange: true,
+        disabled: false,
+        createdAt: new Date().toISOString(),
+      });
+      console.log('Created first admin account "' + u + '" (you must change the password at first login).');
+    } else {
+      console.warn("NO ACCOUNTS EXIST. Set ADMIN_USERNAME and ADMIN_PASSWORD (8+ characters) and restart.");
+    }
   }
-  next();
+
+  const handler = createApp({ dl, config, env: process.env, publicDir: path.join(__dirname, "public") });
+  http.createServer(handler).listen(PORT, () => console.log("Server running on port " + PORT));
 }
 
-app.get("/api/health", async (req, res) => {
-  try {
-    await client.db("admin").command({ ping: 1 });
-    res.json({ ok: true, db: DB_NAME });
-  } catch (e) {
-    res.status(500).json({ ok: false, error: e.message });
-  }
+main().catch((err) => {
+  console.error("Startup failed:", err.message);
+  process.exit(1);
 });
-
-// Return every stored key/value
-app.get("/api/store", checkToken, async (req, res) => {
-  try {
-    const docs = await kv.find({}).toArray();
-    const items = {};
-    for (const d of docs) items[d._id] = d.value;
-    res.json({ items });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Could not read data" });
-  }
-});
-
-// Save changes: { set: { key: "value" }, remove: ["key"] }
-app.post("/api/store/batch", checkToken, async (req, res) => {
-  try {
-    const set = (req.body && req.body.set) || {};
-    const remove = (req.body && req.body.remove) || [];
-    const ops = [];
-    for (const [key, value] of Object.entries(set)) {
-      if (typeof value !== "string") continue;
-      ops.push({
-        updateOne: {
-          filter: { _id: key },
-          update: { $set: { value, updatedAt: new Date() } },
-          upsert: true,
-        },
-      });
-    }
-    for (const key of remove) {
-      if (typeof key === "string") ops.push({ deleteOne: { filter: { _id: key } } });
-    }
-    if (ops.length) await kv.bulkWrite(ops, { ordered: false });
-    res.json({ ok: true, changes: ops.length });
-  } catch (e) {
-    console.error(e);
-    res.status(500).json({ error: "Could not save data" });
-  }
-});
-
-// Your existing app files live in /public
-app.use(express.static(path.join(__dirname, "public")));
-
-client
-  .connect()
-  .then(() => {
-    kv = client.db(DB_NAME).collection("kv");
-    console.log("Connected to MongoDB");
-    app.listen(PORT, () => console.log("Server running on port " + PORT));
-  })
-  .catch((err) => {
-    console.error("MongoDB connection failed:", err.message);
-    process.exit(1);
-  });
