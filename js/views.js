@@ -953,7 +953,7 @@ function renderFees(user) {
   </div>
   <div class="card">
     <div class="card-head"><div><h2>${esc(I18N.t('Payment history'))}</h2><p class="card-sub">${payments.length} transaction${payments.length === 1 ? '' : 's'}</p></div></div>
-    ${payments.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Reference</th><th>Method</th><th class="right">Amount</th><th>Status</th><th></th></tr></thead><tbody>${payments.map(p => `<tr><td>${esc(fmtDate(p.createdAt, true))}</td><td><code>${esc(p.reference)}</code></td><td>${esc(p.method)}</td><td class="right">${money(p.amount)}</td><td>${statusBadge(p.status)}</td><td class="right">${p.status === 'verified' ? `<button type="button" class="btn btn-ghost btn-xs" data-action="payment-receipt" data-payment="${p.id}">${icon('download')} Receipt</button>` : `<span class="muted-text">—</span>`}</td></tr>`).join('')}</tbody></table></div>` : emptyState('wallet', 'No payments yet', 'Your M-Pesa payments will appear here after you record them.')}
+    ${payments.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Reference</th><th>Method</th><th class="right">Amount</th><th>Status</th><th></th></tr></thead><tbody>${payments.map(p => `<tr><td>${esc(fmtDate(p.createdAt, true))}</td><td><code>${esc(p.reference)}</code></td><td>${esc(p.method)}</td><td class="right">${money(p.amount)}</td><td>${statusBadge(p.status)}</td><td class="right"><span class="inline-actions">${p.proofFileId ? `<button type="button" class="btn btn-ghost btn-xs" data-action="payment-proof" data-payment="${p.id}">${icon('eye')} Proof</button>` : ''}${p.status === 'verified' ? `<button type="button" class="btn btn-ghost btn-xs" data-action="payment-receipt" data-payment="${p.id}">${icon('download')} Receipt</button>` : ''}</span>${!p.proofFileId && p.status !== 'verified' ? `<span class="muted-text">—</span>` : ''}</td></tr>`).join('')}</tbody></table></div>` : emptyState('wallet', 'No payments yet', 'Your M-Pesa payments will appear here after you record them.')}
   </div>
   <div class="card">
     <div class="card-head"><div><h2>Hostel accommodation</h2><p class="card-sub">Accommodation is paid separately through Buy Goods</p></div><a class="card-link" href="#/hostel">${esc(I18N.t('Book hostel'))} ${icon('chevron')}</a></div>
@@ -1119,7 +1119,7 @@ function renderHostel(user) {
 /* ---------------- Document vault ---------------- */
 
 function documentSizeLabel(doc) {
-  if (!doc.size) return doc.dataUrl ? 'File' : 'Text';
+  if (!doc.size) return (doc.fileId || doc.dataUrl) ? 'File' : 'Text';
   if (doc.size < 1024) return doc.size + ' B';
   if (doc.size < 1024 * 1024) return Math.round(doc.size / 1024) + ' KB';
   return (doc.size / 1024 / 1024).toFixed(1) + ' MB';
@@ -1140,19 +1140,19 @@ function renderDocuments(user) {
   ${list.length ? `<div class="doc-grid">${list.map(d => {
     const author = d.createdBy ? DB.user(d.createdBy) : null;
     return `<article class="doc-card">
-      <div class="doc-top"><span class="doc-icon">${icon(d.dataUrl ? 'file' : 'bookOpen')}</span><span class="badge badge-info">${esc(d.category)}</span></div>
+      <div class="doc-top"><span class="doc-icon">${icon(d.fileId || d.dataUrl ? 'file' : 'bookOpen')}</span><span class="badge badge-info">${esc(d.category)}</span></div>
       <h3>${esc(d.title)}</h3>
       <p class="muted-text">${esc(d.summary || 'No summary provided.')}</p>
       <div class="doc-meta"><span>${icon('calendar')} ${esc(fmtDate(d.createdAt))}</span><span>${icon('users')} ${esc(audienceLabel(d.audience))}</span><span>${esc(documentSizeLabel(d))}</span></div>
       <div class="doc-actions">
         <button type="button" class="btn btn-ghost btn-sm" data-action="document-open" data-document="${d.id}">${icon('eye')} Open</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-action="document-download" data-document="${d.id}">${icon('download')} ${d.dataUrl ? 'Download' : 'PDF'}</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="document-download" data-document="${d.id}">${icon('download')} ${d.fileId || d.dataUrl ? 'Download' : 'PDF'}</button>
         ${canManage ? `<button type="button" class="btn btn-danger-ghost btn-sm" data-action="document-delete" data-document="${d.id}" aria-label="Delete ${esc(d.title)}">${icon('trash')}</button>` : ''}
       </div>
       ${author ? `<small class="doc-author">Added by ${esc(author.name)}</small>` : ''}
     </article>`;
   }).join('')}</div>` : `<div class="card">${emptyState('file', 'No documents here', canManage ? 'Add a policy, guideline or notice so students and staff can read it offline.' : 'Documents shared by the administration will appear here.', canManage ? `<button type="button" class="btn btn-primary" data-action="document-upload">${icon('plus')} Add document</button>` : '')}</div>`}
-  <p class="page-note">${icon('shield')} Documents are stored on this device for offline reading. Uploads above 800 KB are rejected to keep the offline cache reliable — link to large files instead.</p>`;
+  <p class="page-note">${icon('shield')} Documents and attachments are stored in the browser's IndexedDB on this device (up to 20 MB per file) so they stay available offline without filling the app's other storage.</p>`;
 }
 
 /* ---------------- Attendance ---------------- */

@@ -1,15 +1,8 @@
 {
-  "name": "tricent-mongodb-addon",
-  "version": "2.0.0",
-  "description": "Serves the Tricent portal app with logins, and stores its data and files in MongoDB Atlas",
-  "main": "server.js",
-  "scripts": {
-    "start": "node server.js"
-  },
-  "engines": {
-    "node": ">=18"
-  },
-  "dependencies": {
-    "mongodb": "^6.8.0"
-  }
+  "name": "tsmhst-portal",
+  "version": "1.7.0",
+  "private": true,
+  "description": "Student and staff portal for Tricent School of Medical Health Science and Technology (TSMHST).",
+  "homepage": "https://www.tsmhst.ac.ke",
+  "license": "UNLICENSED"
 }

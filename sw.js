@@ -1,5 +1,5 @@
 /* TSMHST Portal service worker — offline shell for the installable app */
-const CACHE = 'tsmhst-portal-v1.6.0';
+const CACHE = 'tsmhst-portal-v1.7.0';
 
 const CORE = [
   './',
@@ -7,6 +7,7 @@ const CORE = [
   './css/app.css',
   './js/i18n.js',
   './js/data.js',
+  './js/blobs.js',
   './js/store.js',
   './js/ui.js',
   './js/vendor/qrcode.js',

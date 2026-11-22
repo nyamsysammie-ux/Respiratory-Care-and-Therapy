@@ -240,7 +240,40 @@ const DB = {
       meta.auditVersion = 1;
       this.save();
     }
+    if (!meta.blobsVersion) {
+      await this.migrateBlobs();
+      meta.blobsVersion = 1;
+      this.save();
+    }
     await this.ensureStaffAccounts();
+  },
+
+  /* Move legacy base64 file contents out of localStorage into IndexedDB.
+     The record keeps only the small descriptor (fileId, name, mime, size). */
+  async migrateBlobs() {
+    if (typeof Blobs === 'undefined' || typeof Blobs.put !== 'function') return;
+    const targets = [];
+    (this.data.documents || []).forEach(d => { if (d.dataUrl && !d.fileId) targets.push(d); });
+    (this.data.submissions || []).forEach(s => { if (s.dataUrl && !s.fileId) targets.push(s); });
+    (this.data.payments || []).forEach(p => { if (p.dataUrl && !p.proofFileId) targets.push(p); });
+    for (const rec of targets) {
+      const blob = Blobs.fromDataURL(rec.dataUrl);
+      if (!blob) continue;
+      const fileId = uid('file');
+      try { await Blobs.put(fileId, blob); } catch (e) { continue; }
+      const isProof = rec.reference !== undefined;
+      if (isProof) {
+        rec.proofFileId = fileId;
+        if (!rec.proofName) rec.proofName = 'payment-proof';
+        if (!rec.proofMime) rec.proofMime = blob.type || 'application/octet-stream';
+        if (!rec.proofSize) rec.proofSize = blob.size;
+      } else {
+        rec.fileId = fileId;
+        if (!rec.mime) rec.mime = blob.type || 'application/octet-stream';
+        if (!rec.size) rec.size = blob.size;
+      }
+      delete rec.dataUrl;
+    }
   },
 
   async ensureStaffAccounts() {
@@ -649,6 +682,67 @@ const DB = {
     this.recordAudit('account.reject', 'Rejected the registration of ' + user.name + '.', this.user(adminId));
   },
 
+  /* Bulk account creation for the Users desk CSV import. Rows are parsed
+     by the caller; each one becomes an active account with the shared
+     starter password TSMHST@2026. */
+  async importUsers(entries, importerId) {
+    const importer = this.user(importerId) || {};
+    const created = [];
+    const skipped = [];
+    const allowed = ['student', 'lecturer'].concat(ADMIN_ROLE_OPTIONS.map(o => o.code), EXEC_ROLE_OPTIONS.map(o => o.code));
+    for (const entry of entries) {
+      const name = String(entry.name || '').trim();
+      const email = String(entry.email || '').trim().toLowerCase();
+      const role = String(entry.role || '').trim();
+      if (!name || !email) { skipped.push({ name: name || '(no name)', reason: 'missing name or email' }); return; }
+      if (allowed.indexOf(role) === -1) { skipped.push({ name, reason: 'unknown role "' + role + '"' }); return; }
+      if (this.data.users.some(u => (u.email || '').toLowerCase() === email)) { skipped.push({ name, reason: 'email already registered' }); return; }
+      const admissionNo = String(entry.admissionNo || '').trim().toUpperCase();
+      const staffNo = String(entry.staffNo || '').trim().toUpperCase();
+      const campus = String(entry.campus || '').trim() || importer.campus || 'Nairobi';
+      const user = {
+        id: uid('usr'), role, name, email,
+        phone: String(entry.phone || '').trim(),
+        status: entry.status === 'pending' ? 'pending' : 'active',
+        createdAt: isoAt(0),
+        password: null, salt: null,
+        settings: deepCopy(DEFAULT_SETTINGS)
+      };
+      if (user.role === 'student') {
+        if (!admissionNo) { skipped.push({ name, reason: 'missing admission number' }); return; }
+        if (this.data.users.some(u => (u.admissionNo || '').toUpperCase() === admissionNo)) { skipped.push({ name, reason: 'admission number already registered' }); return; }
+        const programme = PORTAL_PROGRAMMES.some(p => p.code === String(entry.programme || '').trim()) ? String(entry.programme).trim() : 'DCH6';
+        const semester = Math.min(9, Math.max(1, Number(entry.semester) || 1));
+        Object.assign(user, {
+          admissionNo, programme, semester,
+          year: Math.ceil(semester / 3), campus,
+          department: programmeFor(programme).dept,
+          title: 'Student, ' + programmeFor(programme).short
+        });
+      } else {
+        if (!staffNo) { skipped.push({ name, reason: 'missing staff number' }); return; }
+        if (this.data.users.some(u => (u.staffNo || '').toUpperCase() === staffNo)) { skipped.push({ name, reason: 'staff number already registered' }); return; }
+        if (isExecRole(user.role)) user.campus = ALL_CAMPUSES; else user.campus = campus;
+        user.staffNo = staffNo;
+        user.department = isStaffRole(user.role) && user.role !== 'lecturer' ? roleOffice(user.role) : (entry.department || 'Department of Health Sciences');
+        user.title = (ROLE_LABELS[user.role] || 'Staff') + (isExecRole(user.role) ? ' — all campuses' : ' — ' + user.campus);
+      }
+      const salt = randomSalt();
+      user.salt = salt;
+      user.password = await hashPassword('TSMHST@2026', salt);
+      user.importedBy = importerId || null;
+      user.importedAt = isoAt(0);
+      this.data.users.push(user);
+      if (user.role === 'student' && user.status === 'active') this.ensureInvoice(user);
+      created.push(user);
+    }
+    if (created.length) {
+      this.save();
+      this.recordAudit('account.import', 'Imported ' + created.length + ' account' + (created.length === 1 ? '' : 's') + ' from CSV' + (skipped.length ? ' (' + skipped.length + ' row(s) skipped)' : '') + '.', importer);
+    }
+    return { created, skipped };
+  },
+
   setUserStatus(id, status) {
     const user = this.data.users.find(u => u.id === id);
     if (!user) return;
@@ -870,19 +964,30 @@ const DB = {
   submissionsFor(assignmentId) {
     return this.data.submissions.filter(s => s.assignmentId === assignmentId);
   },
-  submitAssignment(assignmentId, studentId, text) {
+  submitAssignment(assignmentId, studentId, text, file) {
     const assignment = this.data.assignments.find(a => a.id === assignmentId);
     if (!assignment) return { error: 'missing' };
     if (new Date(assignment.dueAt).getTime() < nowMs()) return { error: 'closed' };
     let sub = this.submissionFor(assignmentId, studentId);
     if (sub && sub.gradedAt) return { error: 'graded' };
+    file = file && file.fileId ? file : null;
+    if (!String(text || '').trim() && !file) return { error: 'empty' };
     if (!sub) {
       sub = { id: uid('sub'), assignmentId, studentId, text: '', createdAt: isoAt(0), score: null, feedback: '', gradedAt: null, gradedBy: null };
       this.data.submissions.push(sub);
     }
     sub.text = String(text || '').trim();
     sub.createdAt = isoAt(0);
+    if (file) {
+      sub.fileId = file.fileId;
+      sub.filename = String(file.name || 'submission');
+      sub.mime = String(file.mime || 'application/octet-stream');
+      sub.size = Number(file.size) || 0;
+    }
     this.save();
+    if (file) {
+      this.recordAudit('assignment.submit', 'Received "' + (sub.filename || 'a file') + '" for "' + assignment.title + '" from ' + (this.user(studentId) || {}).name + '.');
+    }
     return { ok: true, submission: sub };
   },
   createAssignment(payload, userId) {
@@ -978,18 +1083,24 @@ const DB = {
     const pending = this.paymentsFor(studentId).filter(p => p.status === 'pending').reduce((a, b) => a + b.amount, 0);
     return { billed, paid, pending, balance: Math.max(0, billed - paid) };
   },
-  recordPayment(studentId, amount, reference, method) {
+  recordPayment(studentId, amount, reference, method, proof) {
     const amt = Number(amount);
     if (!amt || amt <= 0 || !String(reference || '').trim()) return { error: 'invalid' };
+    proof = proof && proof.fileId ? proof : null;
     const payment = {
       id: uid('pay'), studentId, amount: amt, method: method || 'M-Pesa',
-      reference: String(reference).trim().toUpperCase(), status: 'pending', createdAt: isoAt(0)
+      reference: String(reference).trim().toUpperCase(), status: 'pending', createdAt: isoAt(0),
+      proofFileId: proof ? proof.fileId : '',
+      proofName: proof ? String(proof.name || 'payment-proof') : '',
+      proofMime: proof ? String(proof.mime || 'application/octet-stream') : '',
+      proofSize: proof ? Number(proof.size) || 0 : 0
     };
     this.data.payments.push(payment);
     const student = this.user(studentId) || {};
     this.addNotice({
       title: 'New payment awaiting verification', type: 'system',
-      message: student.name + ' submitted Ksh. ' + amt.toLocaleString('en-KE') + ' with reference ' + payment.reference + '. Verify it in Payments.',
+      message: student.name + ' submitted Ksh. ' + amt.toLocaleString('en-KE') + ' with reference ' + payment.reference +
+        (proof ? ' and attached the M-Pesa message as proof.' : '') + '. Verify it in Payments.',
       audience: 'role', role: 'campus_admin', campus: student.campus, createdBy: studentId
     });
     this.save();
@@ -1283,7 +1394,8 @@ const DB = {
       filename: payload.filename || '',
       mime: payload.mime || 'text/plain',
       size: Number(payload.size) || 0,
-      dataUrl: payload.dataUrl || '',
+      fileId: payload.fileId || '',
+      dataUrl: payload.fileId ? '' : (payload.dataUrl || ''),
       audience: payload.audience === 'students' || payload.audience === 'staff' ? payload.audience : 'all',
       campus: payload.campus || ALL_CAMPUSES,
       slot: ['class', 'exam', 'results'].indexOf(payload.slot) === -1 ? '' : payload.slot,

@@ -444,6 +444,9 @@ async function handleAction(action, el, event) {
       });
       return;
     }
+    case 'payment-proof':
+      await openPaymentProof(el.dataset.payment);
+      return;
     case 'payment-verify': {
       if (!user || !canVerifyPayments(user)) return;
       const payment = DB.data.payments.find(p => p.id === el.dataset.payment);
@@ -565,6 +568,7 @@ async function handleAction(action, el, event) {
       const ok = await confirmDialog({ title: 'Remove document', message: `Remove "${doc.title}" from the vault for everyone?`, confirmText: 'Remove', danger: true });
       if (!ok) return;
       DB.deleteDocument(doc.id);
+      if (doc.fileId) await Blobs.del(doc.fileId);
       closeModal();
       toast('Document removed from the vault.', 'info');
       render();
@@ -584,6 +588,12 @@ async function handleAction(action, el, event) {
       return;
     case 'users-export':
       exportUsersCSV(user);
+      return;
+    case 'users-import':
+      openUsersImportModal();
+      return;
+    case 'submission-file':
+      await downloadSubmissionFile(el.dataset.sub);
       return;
     case 'payments-export':
       exportPaymentsCSV(user);
@@ -730,6 +740,24 @@ async function handleRegister(form) {
 
 /* ---------------- Assignments ---------------- */
 
+async function downloadSubmissionFile(submissionId) {
+  const user = DB.currentUser();
+  const sub = DB.data.submissions.find(s => s.id === submissionId);
+  if (!sub || !user || !sub.fileId) return;
+  const assignment = DB.data.assignments.find(a => a.id === sub.assignmentId);
+  const student = DB.user(sub.studentId);
+  const lecturerOwns = user.role === 'lecturer' && DB.unitsForLecturer(user.id).some(u => u.code === (assignment || {}).unitCode);
+  const allowed = user.id === sub.studentId || lecturerOwns || isAdminRole(user.role);
+  if (!allowed) return;
+  const blob = await Blobs.get(sub.fileId);
+  if (!blob) {
+    toast('That file is not stored on this device. It was uploaded on another phone.', 'error');
+    return;
+  }
+  const who = student ? (student.admissionNo || student.name) : 'submission';
+  downloadBlob(blob, (assignment ? assignment.unitCode + '-' : '') + who + '-' + (sub.filename || 'submission'));
+}
+
 function openAssignment(id) {
   const user = DB.currentUser();
   const assignment = DB.data.assignments.find(a => a.id === id);
@@ -747,11 +775,13 @@ function openAssignment(id) {
       <div class="prose">${esc(assignment.instructions)}</div>
       ${sub ? `<div class="submission-box ${graded ? 'graded' : ''}">
         <div class="submission-head"><strong>${graded ? 'Graded submission' : 'Your submission'}</strong><span>${esc(relative(sub.createdAt))}</span></div>
-        <p class="prose">${esc(sub.text)}</p>
+        ${sub.text ? `<p class="prose">${esc(sub.text)}</p>` : ''}
+        ${sub.fileId ? `<button type="button" class="btn btn-ghost btn-xs" data-action="submission-file" data-sub="${sub.id}">${icon('download')} ${esc(sub.filename || 'Attached file')}</button>` : ''}
         ${graded ? `<div class="graded-line"><strong>${sub.score}/${assignment.maxScore}</strong><span>${esc(sub.feedback || 'No feedback provided.')}</span></div>` : `<p class="muted-text">Awaiting grading.</p>`}
       </div>` : ''}
       ${graded ? '' : closed ? `<div class="alert-strip warn">${icon('clock')}<span>The deadline has passed. Submissions are closed.</span></div>` : `<form data-form="submit-assignment" data-id="${assignment.id}">
-        <label class="field"><span>${esc(I18N.t('Your answer'))}</span><textarea name="text" rows="6" required placeholder="Type your answer or paste your submission text here…">${sub ? esc(sub.text) : ''}</textarea></label>
+        <label class="field"><span>${esc(I18N.t('Your answer'))}</span><textarea name="text" rows="6" placeholder="Type your answer or paste your submission text here… (optional if you attach a file)">${sub ? esc(sub.text) : ''}</textarea></label>
+        <label class="field"><span>Attach your work (optional — PDF, Word or image, max 10 MB)</span><input type="file" name="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,application/pdf,image/*"></label>
         <div class="modal-actions"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} ${esc(sub ? 'Resubmit' : I18N.t('Submit work'))}</button></div>
       </form>`}`;
     modal(assignment.title, body);
@@ -773,7 +803,8 @@ function openAssignment(id) {
       const graded = sub.gradedAt;
       return `<div class="submission-row"><div class="submission-row-head"><span class="person-cell">${avatar(s, 'xs')} <strong>${esc(s.name)}</strong></span>${graded ? `<span class="grade-pill grade-${gradeFor(sub.score).grade}">${sub.score}/${assignment.maxScore}</span>` : statusBadge('submitted')}</div>
         <small class="cell-sub">${esc(s.admissionNo)} · ${esc(fmtDate(sub.createdAt, true))}</small>
-        <p class="prose submission-text">${esc(sub.text)}</p>
+        ${sub.text ? `<p class="prose submission-text">${esc(sub.text)}</p>` : ''}
+        ${sub.fileId ? `<div class="inline-actions"><button type="button" class="btn btn-ghost btn-xs" data-action="submission-file" data-sub="${sub.id}">${icon('download')} ${esc(sub.filename || 'Attached file')}</button></div>` : ''}
         <form class="grade-form" data-form="grade-submission" data-id="${sub.id}" data-max="${assignment.maxScore}">
           <input type="number" name="score" min="0" max="${assignment.maxScore}" step="0.5" placeholder="Score /${assignment.maxScore}" value="${sub.score !== null ? sub.score : ''}" required>
           <input type="text" name="feedback" placeholder="Feedback (optional)" value="${esc(sub.feedback || '')}">
@@ -916,8 +947,31 @@ function openPayModal() {
   <form data-form="pay-fees" class="form-grid">
     <label class="field"><span>${esc(I18N.t('Amount'))} (Ksh.)</span><input name="amount" type="number" min="1" step="1" value="${fees.balance || ''}" required></label>
     <label class="field"><span>${esc(I18N.t('M-Pesa code'))} / ${esc(I18N.t('Reference'))}</span><input name="reference" required minlength="4" placeholder="e.g. QK84LM92TX" autocomplete="off"></label>
+    <label class="field form-span"><span>Attach M-Pesa proof (optional — screenshot or PDF of the message, max 10 MB)</span><input type="file" name="proof" accept="image/*,application/pdf,.png,.jpg,.jpeg,.webp,.pdf"></label>
     <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} ${esc(I18N.t('Record payment'))}</button></div>
-  </form>`);
+  </form><p class="demo-note">${icon('info')} Attaching a screenshot or PDF of your M-Pesa message lets the campus admin verify against the real evidence instead of the typed code only.</p>`);
+}
+
+async function openPaymentProof(paymentId) {
+  const user = DB.currentUser();
+  const payment = DB.data.payments.find(p => p.id === paymentId);
+  if (!payment || !user) return;
+  const student = DB.user(payment.studentId);
+  const canView = user.id === payment.studentId || canVerifyPayments(user) || isExecRole(user.role) || user.role === 'accounts_clerk';
+  if (!canView) return;
+  if (!payment.proofFileId) { toast('No proof was attached to this payment.', 'info'); return; }
+  const blob = await Blobs.get(payment.proofFileId);
+  if (!blob) {
+    toast('The attached proof is not stored on this device. It was uploaded on another phone.', 'error');
+    return;
+  }
+  const objectUrl = URL.createObjectURL(blob);
+  const isImage = (blob.type || payment.proofMime || '').indexOf('image/') === 0;
+  modal('Payment proof — ' + payment.reference, `<p class="modal-lead">${esc(student ? student.name : 'Student')} · ${money(payment.amount)} · ${esc(payment.method)} · ${esc(fmtDate(payment.createdAt, true))}</p>
+    ${isImage ? `<img class="doc-preview" src="${objectUrl}" alt="M-Pesa payment proof">` : `<p class="muted-text">The proof is a PDF. Open or download it to compare it against the M-Pesa reference <code>${esc(payment.reference)}</code>.</p>`}
+    ${statusBadge(payment.status)}
+    <div class="modal-actions"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Close'))}</button><a class="btn btn-primary" href="${objectUrl}" download="${esc(payment.proofName || 'payment-proof')}">${icon('download')} Download proof</a></div>`, { size: 'lg' });
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
 }
 
 function openRatingModal() {
@@ -1097,10 +1151,29 @@ async function handleSubmit(form) {
     const assignmentId = form.dataset.id;
     const assignment = DB.data.assignments.find(a => a.id === assignmentId);
     if (!assignment) return;
-    const result = DB.submitAssignment(assignmentId, user.id, String(fd.get('text') || ''));
+    let file = null;
+    const fileInput = form.querySelector('input[type="file"]');
+    const attachment = fileInput && fileInput.files[0];
+    if (attachment) {
+      if (attachment.size > 10 * 1024 * 1024) { toast('Submission files must be 10 MB or smaller.', 'error'); return; }
+      if (!(/^(image\/|application\/pdf|application\/msword)/.test(attachment.type) || /\.(pdf|docx?|png|jpe?g|webp|txt)$/i.test(attachment.name))) {
+        toast('Attach a PDF, Word document or image.', 'error');
+        return;
+      }
+      try {
+        const fileId = uid('file');
+        await Blobs.put(fileId, attachment);
+        file = { fileId, name: attachment.name, mime: attachment.type || 'application/octet-stream', size: attachment.size };
+      } catch (e) {
+        toast('This browser could not store that file. Try a smaller file or another browser.', 'error');
+        return;
+      }
+    }
+    if (!String(fd.get('text') || '').trim() && !file) { toast('Type your answer or attach a file.', 'error'); return; }
+    const result = DB.submitAssignment(assignmentId, user.id, String(fd.get('text') || ''), file);
     if (result.error === 'closed') toast('The deadline has passed. Submissions are closed.', 'error');
     else if (result.error === 'graded') toast('This assignment has already been graded.', 'error');
-    else { toast('Assignment submitted successfully.', 'success'); closeModal(); render(); }
+    else { toast(file ? 'Assignment submitted with the attached file.' : 'Assignment submitted successfully.', 'success'); closeModal(); render(); }
     return;
   }
 
@@ -1163,9 +1236,27 @@ async function handleSubmit(form) {
 
   if (kind === 'pay-fees') {
     if (user.role !== 'student') return;
-    const result = DB.recordPayment(user.id, Number(fd.get('amount')), String(fd.get('reference') || ''), 'M-Pesa');
+    let proof = null;
+    const proofInput = form.querySelector('input[type="file"]');
+    const proofFile = proofInput && proofInput.files[0];
+    if (proofFile) {
+      if (proofFile.size > 10 * 1024 * 1024) { toast('Proof files must be 10 MB or smaller.', 'error'); return; }
+      if (!(/^(image\/|application\/pdf)/.test(proofFile.type) || /\.(png|jpe?g|webp|pdf)$/i.test(proofFile.name))) {
+        toast('Attach a screenshot or PDF of the M-Pesa message.', 'error');
+        return;
+      }
+      try {
+        const fileId = uid('file');
+        await Blobs.put(fileId, proofFile);
+        proof = { fileId, name: proofFile.name, mime: proofFile.type || 'application/octet-stream', size: proofFile.size };
+      } catch (e) {
+        toast('This browser could not store that file. Try a smaller file or another browser.', 'error');
+        return;
+      }
+    }
+    const result = DB.recordPayment(user.id, Number(fd.get('amount')), String(fd.get('reference') || ''), 'M-Pesa', proof);
     if (result.error) { toast('Enter a valid amount and M-Pesa reference.', 'error'); return; }
-    toast('Payment recorded. Finance will verify the reference.', 'success');
+    toast(proof ? 'Payment recorded with proof attached. Finance will verify the reference.' : 'Payment recorded. Finance will verify the reference.', 'success');
     closeModal();
     render();
     return;
@@ -1234,17 +1325,23 @@ async function handleSubmit(form) {
     if (!payload.title) { toast('Enter a title for the document.', 'error'); return; }
     const isResultsUpload = payload.slot === 'results';
     if (attachment) {
-      if (attachment.size > 800 * 1024) { toast('Attachments must be 800 KB or smaller.', 'error'); return; }
+      if (attachment.size > 20 * 1024 * 1024) { toast('Attachments must be 20 MB or smaller.', 'error'); return; }
       payload.filename = attachment.name;
       payload.mime = attachment.type || 'application/octet-stream';
       payload.size = attachment.size;
-      payload.dataUrl = await readFileAsDataURL(attachment);
+      try {
+        payload.fileId = uid('file');
+        await Blobs.put(payload.fileId, attachment);
+      } catch (e) {
+        toast('This browser could not store that file. Try a smaller file or another browser.', 'error');
+        return;
+      }
     }
     if (isResultsUpload && !(attachment && (/\.pdf$/i.test(attachment.name) || payload.mime === 'application/pdf'))) {
       toast('Attach the signed results sheet as a PDF.', 'error');
       return;
     }
-    if (!payload.body && !payload.dataUrl) { toast('Add body text or attach a file.', 'error'); return; }
+    if (!payload.body && !payload.fileId) { toast('Add body text or attach a file.', 'error'); return; }
     const result = DB.addDocument(payload, user.id);
     if (result.error) { toast('Enter a title for the document.', 'error'); return; }
     closeModal();
@@ -1257,6 +1354,11 @@ async function handleSubmit(form) {
 
   if (kind === 'import-marks') {
     await importMarksCSV(form);
+    return;
+  }
+
+  if (kind === 'import-users') {
+    await importUsersCSV(form);
     return;
   }
 
@@ -1346,15 +1448,6 @@ function filterCourses() {
 
 function dateStamp() { return new Date().toISOString().slice(0, 10); }
 
-function readFileAsDataURL(file) {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(String(reader.result || ''));
-    reader.onerror = () => reject(reader.error);
-    reader.readAsDataURL(file);
-  });
-}
-
 function openDocumentModal(preset) {
   const user = DB.currentUser();
   if (!user || !isStaffRole(user.role)) return;
@@ -1376,28 +1469,45 @@ function openDocumentModal(preset) {
     <label class="field form-span"><span>Campus</span><select name="campus">${campuses.map(c => `<option value="${esc(c)}" ${c === campusDefault ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
     <label class="field form-span"><span>Summary</span><input name="summary" maxlength="130" placeholder="One line shown on the document card" value="${esc(preset.summary || '')}"></label>
     <label class="field form-span"><span>Body text (optional when you attach a file)</span><textarea name="body" rows="5" placeholder="Paste the policy or notice text. Blank lines become paragraphs."></textarea></label>
-    <label class="field form-span"><span>${isResults ? 'Attach the signed results sheet (PDF, max 800 KB)' : 'Attach a file (optional, max 800 KB)'}</span><input type="file" name="file" accept="${isResults ? 'application/pdf,.pdf' : '.pdf,.png,.jpg,.jpeg,.txt,.csv,.doc,.docx'}"></label>
+    <label class="field form-span"><span>${isResults ? 'Attach the signed results sheet (PDF, max 20 MB)' : 'Attach a file (optional, max 20 MB)'}</span><input type="file" name="file" accept="${isResults ? 'application/pdf,.pdf' : '.pdf,.png,.jpg,.jpeg,.txt,.csv,.doc,.docx'}"></label>
     <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon(isResults ? 'upload' : 'file')} ${isResults ? 'Publish results sheet' : slot ? 'Publish timetable' : 'Add to vault'}</button></div>
-  </form><p class="demo-note">${icon('info')} Documents are saved on this device so students can read them offline. Large attachments fill the offline cache quickly.</p>`);
+  </form><p class="demo-note">${icon('info')} Files are stored in the browser's IndexedDB on this device — up to 20 MB each, hundreds of MB in total — so students can read them offline.</p>`);
 }
 
-function openDocumentRecord(id) {
+async function openDocumentRecord(id) {
   const doc = DB.document(id);
   if (!doc) return;
-  const body = doc.dataUrl
-    ? (doc.mime && doc.mime.indexOf('image/') === 0
-      ? `<img class="doc-preview" src="${doc.dataUrl}" alt="${esc(doc.title)}">`
+  const blob = doc.fileId ? await Blobs.get(doc.fileId) : null;
+  const objectUrl = blob ? URL.createObjectURL(blob) : null;
+  const inline = !!(objectUrl && doc.mime && doc.mime.indexOf('image/') === 0);
+  const body = objectUrl
+    ? (inline
+      ? `<img class="doc-preview" src="${objectUrl}" alt="${esc(doc.title)}">`
       : `<p class="muted-text">This file is stored in the vault. Use Download to open it on your device.</p>`)
-    : `<div class="doc-body">${String(doc.body || '').split(/\n{2,}/).map(p => `<p>${esc(p)}</p>`).join('')}</div>`;
+    : (doc.dataUrl
+      ? (doc.mime && doc.mime.indexOf('image/') === 0
+        ? `<img class="doc-preview" src="${esc(doc.dataUrl)}" alt="${esc(doc.title)}">`
+        : `<p class="muted-text">This file is stored in the vault. Use Download to open it on your device.</p>`)
+      : `<div class="doc-body">${String(doc.body || '').split(/\n{2,}/).map(p => `<p>${esc(p)}</p>`).join('')}</div>`);
   modal(doc.title, `<p class="modal-lead">${esc(doc.category)} · ${esc(fmtDate(doc.createdAt))} · ${esc(documentSizeLabel(doc))}</p>
     ${doc.summary ? `<p>${esc(doc.summary)}</p>` : ''}
     ${body}
-    <div class="modal-actions"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Close'))}</button><button type="button" class="btn btn-primary" data-action="document-download" data-document="${doc.id}">${icon('download')} ${doc.dataUrl ? 'Download file' : 'Download PDF'}</button></div>`, { size: 'lg' });
+    <div class="modal-actions"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Close'))}</button><button type="button" class="btn btn-primary" data-action="document-download" data-document="${doc.id}">${icon('download')} ${objectUrl || doc.dataUrl ? 'Download file' : 'Download PDF'}</button></div>`, { size: 'lg' });
+  if (objectUrl) setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
 }
 
-function downloadDocumentRecord(id) {
+async function downloadDocumentRecord(id) {
   const doc = DB.document(id);
   if (!doc) return;
+  if (doc.fileId) {
+    const blob = await Blobs.get(doc.fileId);
+    if (blob) {
+      downloadBlob(blob, doc.filename || doc.title);
+      return;
+    }
+    toast('That file is no longer stored on this device. It was uploaded on another device or the browser data was cleared.', 'error');
+    return;
+  }
   if (doc.dataUrl) {
     const link = document.createElement('a');
     link.href = doc.dataUrl;
@@ -1423,6 +1533,77 @@ function exportUsersCSV(user) {
       u.programme ? programmeFor(u.programme).code : '', u.semester || '', u.campus || '', u.status, fmtDate(u.createdAt)
     ]));
   toast(users.length + ' accounts exported to CSV.', 'success');
+}
+
+function openUsersImportModal() {
+  const user = DB.currentUser();
+  if (!user || !canApproveAccounts(user)) return;
+  modal('Import users from CSV', `<form data-form="import-users">
+    <p class="modal-lead">Upload a CSV with the columns <strong>Name</strong>, <strong>Role</strong>, <strong>Email</strong>, <strong>Phone</strong>, <strong>Admission no.</strong>, <strong>Staff no.</strong>, <strong>Programme</strong>, <strong>Semester</strong>, <strong>Campus</strong> and <strong>Status</strong> — the same format as the Users desk CSV export.</p>
+    <p class="muted-text">Students need an admission number; lecturers and staff need a staff number. Roles accept the same labels as the export (Student, Lecturer, Campus Admin…). Rows with a duplicate email or number are skipped.</p>
+    <label class="field"><span>CSV file</span><input type="file" name="file" accept=".csv,text/csv" required></label>
+    <div class="modal-actions"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('upload')} Import accounts</button></div>
+  </form><p class="demo-note">${icon('info')} Imported accounts start with the shared password <strong>TSMHST@2026</strong> — share it privately and ask each user to change it after first sign-in.</p>`);
+}
+
+async function importUsersCSV(form) {
+  const user = DB.currentUser();
+  if (!user || !canApproveAccounts(user)) return;
+  const fileInput = form.querySelector('input[type="file"]');
+  const file = fileInput && fileInput.files[0];
+  if (!file) { toast('Choose a CSV file first.', 'error'); return; }
+  if (file.size > 400 * 1024) { toast('That CSV is too large. Keep imports under 400 KB.', 'error'); return; }
+  const text = await file.text();
+  const rows = parseCSV(text);
+  if (rows.length < 2) { toast('The CSV does not contain any data rows.', 'error'); return; }
+  const header = rows[0].map(h => String(h).trim().toLowerCase());
+  const find = names => header.findIndex(h => names.some(n => h.indexOf(n) !== -1));
+  const iName = find(['name']);
+  const iRole = find(['role']);
+  const iEmail = find(['email']);
+  const iPhone = find(['phone']);
+  const iAdm = find(['admission']);
+  const iStaff = find(['staff']);
+  const iProg = find(['programme']);
+  const iSem = find(['semester']);
+  const iCampus = find(['campus']);
+  const iStatus = find(['status']);
+  if (iName === -1 || iRole === -1 || iEmail === -1) {
+    toast('The CSV needs Name, Role and Email columns.', 'error');
+    return;
+  }
+  const execScope = isExecRole(user.role) || user.campus === ALL_CAMPUSES;
+  const allowedCampuses = execScope ? CAMPUSES : [user.campus];
+  const entries = [];
+  rows.slice(1).forEach(row => {
+    const roleLabelCsv = String(row[iRole] || '').trim();
+    const role = roleCodeFromLabel(roleLabelCsv) || roleLabelCsv.toLowerCase().replace(/\s+/g, '_');
+    let campus = String(row[iCampus === -1 ? 0 : iCampus] || '').trim();
+    if (allowedCampuses.indexOf(campus) === -1) campus = allowedCampuses[0];
+    entries.push({
+      name: String(row[iName] || '').trim(),
+      role,
+      email: String(row[iEmail] || '').trim(),
+      phone: iPhone === -1 ? '' : String(row[iPhone] || '').trim(),
+      admissionNo: iAdm === -1 ? '' : String(row[iAdm] || '').trim(),
+      staffNo: iStaff === -1 ? '' : String(row[iStaff] || '').trim(),
+      programme: iProg === -1 ? '' : String(row[iProg] || '').trim(),
+      semester: iSem === -1 ? '' : Number(String(row[iSem] || '').trim()),
+      campus,
+      status: iStatus === -1 ? 'active' : (String(row[iStatus] || '').trim().toLowerCase() === 'pending' ? 'pending' : 'active')
+    });
+  });
+  if (!entries.length) { toast('No importable rows were found in that file.', 'error'); return; }
+  const result = await DB.importUsers(entries, user.id);
+  closeModal();
+  render();
+  const notes = [];
+  if (result.skipped.length) notes.push(result.skipped.length + ' row(s) skipped');
+  if (result.created.length) {
+    toast(result.created.length + ' account' + (result.created.length === 1 ? '' : 's') + ' imported' + (notes.length ? ' — ' + notes.join(', ') : '') + '. Starter password: TSMHST@2026.', notes.length ? 'info' : 'success');
+  } else {
+    toast('No accounts were imported — every row was skipped (duplicate emails or missing numbers).', 'error');
+  }
 }
 
 function exportPaymentsCSV(user) {

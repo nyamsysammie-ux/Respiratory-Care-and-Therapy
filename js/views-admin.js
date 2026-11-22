@@ -409,7 +409,7 @@ function renderUsers(user) {
   const counts = { all: users.length, student: 0, lecturer: 0, council: 0, admin: 0 };
   users.forEach(u => { if (u.role === 'student') counts.student++; else if (u.role === 'lecturer') counts.lecturer++; else if (u.role === 'council') counts.council++; else if (isAdminRole(u.role)) counts.admin++; });
   return `${pageHead(I18N.t('Users'), scope === ALL_CAMPUSES ? 'All portal accounts across every campus' : `Portal accounts at ${scope} campus`,
-    `<button type="button" class="btn btn-ghost btn-sm" data-action="users-export">${icon('download')} Export CSV</button><a class="btn btn-ghost btn-sm" href="#/approvals">${icon('approvals')} ${esc(I18N.t('Approvals'))}</a>`)}
+    `<button type="button" class="btn btn-ghost btn-sm" data-action="users-import">${icon('upload')} Import CSV</button><button type="button" class="btn btn-ghost btn-sm" data-action="users-export">${icon('download')} Export CSV</button><a class="btn btn-ghost btn-sm" href="#/approvals">${icon('approvals')} ${esc(I18N.t('Approvals'))}</a>`)}
   <div class="toolbar">
     <label class="search-field">${icon('search')}<input id="users-search" type="search" placeholder="Search name, email or number" aria-label="Search users"></label>
     <div class="filter-row" data-user-filters>
@@ -456,6 +456,7 @@ function renderFinance(user) {
         <div class="payment-person">${avatar(s, 'sm')}<div><strong>${esc(s ? s.name : 'Student')}</strong><small>${esc(s ? s.admissionNo : '')} · ${esc(relative(p.createdAt))}</small></div></div>
         <div class="payment-ref"><span>Reference</span><code>${esc(p.reference)}</code></div>
         <div class="payment-amount"><strong>${money(p.amount)}</strong><span>${esc(p.method)}</span></div>
+        <div class="inline-actions">${p.proofFileId ? `<button type="button" class="btn btn-ghost btn-xs" data-action="payment-proof" data-payment="${p.id}">${icon('eye')} Proof</button>` : ''}</div>
       </div>`; }).join('')}</div>` : `<div class="inline-success">${icon('checkCircle')} No cash is awaiting verification.</div>`}
     </div>
     <div class="card">
@@ -502,7 +503,7 @@ function renderPayments(user) {
       <div class="payment-person">${avatar(s, 'sm')}<div><strong>${esc(s ? s.name : 'Student')}</strong><small>${esc(s ? s.admissionNo : '')} · ${esc(relative(p.createdAt))}</small></div></div>
       <div class="payment-ref"><span>Reference</span><code>${esc(p.reference)}</code></div>
       <div class="payment-amount"><strong>${money(p.amount)}</strong><span>${esc(p.method)}</span></div>
-      <div class="inline-actions">${canVerify ? `<button type="button" class="btn btn-primary btn-xs" data-action="payment-verify" data-payment="${p.id}">${icon('check')} ${esc(I18N.t('Verify'))}</button><button type="button" class="btn btn-danger-ghost btn-xs" data-action="payment-reject" data-payment="${p.id}">${esc(I18N.t('Reject'))}</button>` : statusBadge('pending')}</div>
+      <div class="inline-actions">${p.proofFileId ? `<button type="button" class="btn btn-ghost btn-xs" data-action="payment-proof" data-payment="${p.id}">${icon('eye')} Proof</button>` : ''}${canVerify ? `<button type="button" class="btn btn-primary btn-xs" data-action="payment-verify" data-payment="${p.id}">${icon('check')} ${esc(I18N.t('Verify'))}</button><button type="button" class="btn btn-danger-ghost btn-xs" data-action="payment-reject" data-payment="${p.id}">${esc(I18N.t('Reject'))}</button>` : statusBadge('pending')}</div>
     </div>`; }).join('')}</div>` : `<div class="inline-success">${icon('checkCircle')} No payments are waiting for verification.</div>`}
   </div>
   <div class="card">
