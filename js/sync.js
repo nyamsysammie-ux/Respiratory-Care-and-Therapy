@@ -33,9 +33,11 @@ const Sync = (function () {
   function loadCfg() {
     try {
       const c = DB.data.meta && DB.data.meta.cloud;
-      cfg = c && c.url && c.key
-        ? { url: String(c.url).replace(/\/+$/, ''), key: c.key, bucket: c.bucket || 'portal-files' }
-        : null;
+      if (!c || !c.url) { cfg = null; return; }
+      const type = c.type === 'server' ? 'server' : 'supabase';
+      cfg = type === 'server'
+        ? { type, url: String(c.url).replace(/\/+$/, '') }
+        : { type, url: String(c.url).replace(/\/+$/, ''), key: c.key, bucket: c.bucket || 'portal-files' };
     } catch (e) { cfg = null; }
   }
 
@@ -52,7 +54,8 @@ const Sync = (function () {
   function lastSyncedAt() { return (DB.data.meta && DB.data.meta.cloudSyncedAt) || ''; }
 
   function headers(json) {
-    const h = { apikey: cfg.key, Authorization: 'Bearer ' + cfg.key };
+    const h = {};
+    if (cfg.type !== 'server') { h.apikey = cfg.key; h.Authorization = 'Bearer ' + cfg.key; }
     if (json) h['Content-Type'] = 'application/json';
     return h;
   }
@@ -94,11 +97,20 @@ const Sync = (function () {
   /* ---------------- Push ---------------- */
 
   async function pushRows(rows) {
-    const res = await fetch(cfg.url + '/rest/v1/cloud_records', {
-      method: 'POST',
-      headers: Object.assign(headers(true), { Prefer: 'resolution=merge-duplicates,return=minimal' }),
-      body: JSON.stringify(rows)
-    });
+    let res;
+    if (cfg.type === 'server') {
+      res = await fetch(cfg.url + '/api/records', {
+        method: 'POST',
+        headers: headers(true),
+        body: JSON.stringify({ rows: rows.map(r => ({ table: r.table_name, id: r.id, payload: r.payload, updatedAt: r.updated_at, deleted: r.deleted })) })
+      });
+    } else {
+      res = await fetch(cfg.url + '/rest/v1/cloud_records', {
+        method: 'POST',
+        headers: Object.assign(headers(true), { Prefer: 'resolution=merge-duplicates,return=minimal' }),
+        body: JSON.stringify(rows)
+      });
+    }
     if (!res.ok) throw new Error('cloud push failed (' + res.status + ')');
   }
 
@@ -132,14 +144,23 @@ const Sync = (function () {
   }
 
   async function uploadFile(fileId, blob) {
-    const res = await fetch(cfg.url + '/storage/v1/object/' + encodeURIComponent(cfg.bucket) + '/' + encodeURIComponent(fileId), {
-      method: 'POST',
-      headers: Object.assign(headers(false), {
-        'Content-Type': blob.type || 'application/octet-stream',
-        'x-upsert': 'true'
-      }),
-      body: blob
-    });
+    let res;
+    if (cfg.type === 'server') {
+      res = await fetch(cfg.url + '/api/files/' + encodeURIComponent(fileId), {
+        method: 'POST',
+        headers: Object.assign(headers(false), { 'Content-Type': blob.type || 'application/octet-stream' }),
+        body: blob
+      });
+    } else {
+      res = await fetch(cfg.url + '/storage/v1/object/' + encodeURIComponent(cfg.bucket) + '/' + encodeURIComponent(fileId), {
+        method: 'POST',
+        headers: Object.assign(headers(false), {
+          'Content-Type': blob.type || 'application/octet-stream',
+          'x-upsert': 'true'
+        }),
+        body: blob
+      });
+    }
     if (!res.ok) throw new Error('file upload failed (' + res.status + ')');
     uploaded[fileId] = true;
     persistUploaded();
@@ -164,11 +185,18 @@ const Sync = (function () {
   /* ---------------- Pull ---------------- */
 
   async function pullRows(sinceIso) {
-    let q = 'select=*&table_name=in.(' + TABLES.join(',') + ')&order=updated_at.asc&limit=1000';
-    if (sinceIso) q += '&updated_at=gt.' + encodeURIComponent(sinceIso);
-    const res = await fetch(cfg.url + '/rest/v1/cloud_records?' + q, { headers: headers(false) });
+    let res;
+    if (cfg.type === 'server') {
+      res = await fetch(cfg.url + '/api/records' + (sinceIso ? '?since=' + encodeURIComponent(sinceIso) : ''), { headers: headers(false) });
+    } else {
+      let q = 'select=*&table_name=in.(' + TABLES.join(',') + ')&order=updated_at.asc&limit=1000';
+      if (sinceIso) q += '&updated_at=gt.' + encodeURIComponent(sinceIso);
+      res = await fetch(cfg.url + '/rest/v1/cloud_records?' + q, { headers: headers(false) });
+    }
     if (!res.ok) throw new Error('cloud pull failed (' + res.status + ')');
-    return res.json();
+    const data = await res.json();
+    if (cfg.type === 'server') return data.rows || [];
+    return data;
   }
 
   async function pull() {
@@ -215,15 +243,30 @@ const Sync = (function () {
   async function fetchFile(fileId) {
     if (!configured() || !fileId) return null;
     try {
-      const res = await fetch(cfg.url + '/storage/v1/object/' + encodeURIComponent(cfg.bucket) + '/' + encodeURIComponent(fileId), { headers: headers(false) });
+      const path = cfg.type === 'server'
+        ? cfg.url + '/api/files/' + encodeURIComponent(fileId)
+        : cfg.url + '/storage/v1/object/' + encodeURIComponent(cfg.bucket) + '/' + encodeURIComponent(fileId);
+      const res = await fetch(path, { headers: headers(false) });
       if (!res.ok) return null;
       return await res.blob();
     } catch (e) { return null; }
   }
 
-  async function testConnection(url, key) {
+  async function testConnection(url, key, type) {
+    const base = String(url).replace(/\/+$/, '');
+    if (type === 'server') {
+      try {
+        const res = await fetch(base + '/api/health');
+        if (!res.ok) return { ok: false, error: 'The sync server answered with status ' + res.status + '.' };
+        const body = await res.json().catch(() => ({}));
+        if (body.ok === false) return { ok: false, error: body.error || 'The server cannot reach MongoDB. Check that MongoDB is running on its port.' };
+        return { ok: true, info: body.database ? 'MongoDB database: ' + body.database : '' };
+      } catch (e) {
+        return { ok: false, error: 'Could not reach the sync server. Check the address and port (for example http://192.168.1.20:3000), that the server is running, and that its port is open.' };
+      }
+    }
     try {
-      const res = await fetch(String(url).replace(/\/+$/, '') + '/rest/v1/cloud_records?select=id&limit=1', {
+      const res = await fetch(base + '/rest/v1/cloud_records?select=id&limit=1', {
         headers: { apikey: key, Authorization: 'Bearer ' + key }
       });
       if (res.ok) return { ok: true };

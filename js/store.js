@@ -602,7 +602,7 @@ const DB = {
     );
     if (!user) return { error: 'invalid' };
     if (user.status === 'pending') return { error: 'pending' };
-    if (user.status === 'rejected' || user.status === 'suspended') return { error: 'inactive' };
+    if (user.status === 'rejected' || user.status === 'suspended' || user.status === 'removed') return { error: 'inactive' };
     const hash = await hashPassword(String(password || ''), user.salt);
     if (hash !== user.password) return { error: 'invalid' };
     const ses = { userId: user.id, sid: uid('sid'), at: nowMs() };
@@ -788,6 +788,33 @@ const DB = {
     this.recordAudit('account.' + (status === 'suspended' ? 'suspend' : 'activate'), (status === 'suspended' ? 'Suspended ' : 'Activated ') + user.name + "'s account.");
   },
 
+  /* Removal from the portal: campus admin -> students, principal -> lecturers,
+     director -> administrators. Soft removal: sign-in is blocked and the
+     account is hidden, but marks, payments and audit history are kept. */
+  canRemove(actor, target) {
+    if (!actor || !target || actor.id === target.id || target.status === 'removed') return false;
+    const a = actor.role, t = target.role;
+    let allowed = false;
+    if (a === 'campus_admin') allowed = t === 'student';
+    else if (a === 'principal') allowed = t === 'lecturer';
+    else if (a === 'director') allowed = ADMIN_ROLES.indexOf(t) !== -1 && t !== 'owner' && t !== 'director';
+    return allowed && this.inScope(actor, target);
+  },
+  removeUser(id, actorId, reason) {
+    const user = this.data.users.find(u => u.id === id);
+    const actor = this.user(actorId);
+    if (!user || !actor) return { error: 'missing' };
+    if (!this.canRemove(actor, user)) return { error: 'forbidden' };
+    user.status = 'removed';
+    user.removedAt = isoAt(0);
+    user.removedBy = actorId;
+    user.removedReason = String(reason || '').trim().slice(0, 200);
+    if (this.data.presence && this.data.presence[id]) this.data.presence[id].online = false;
+    this.save();
+    this.recordAudit('account.remove', 'Removed ' + user.name + ' (' + (ROLE_LABELS[user.role] || user.role) + ') from the portal' + (user.removedReason ? ' — ' + user.removedReason : '') + '.', actor);
+    return { ok: true };
+  },
+
   canApprove(approver, target) {
     if (!approver || !target) return false;
     const a = approver.role;
@@ -859,7 +886,7 @@ const DB = {
       .filter(i => i.label && i.amount > 0);
     if (!clean.length) return { error: 'items' };
     invoice.items = clean;
-    invoice.total = clean.reduce((a, b) => a + b.amount, 0);
+    invoice.total = clean.reduce((a, b) => a + b.amount, 0) + (Number(invoice.adjustment) || 0);
     invoice.updatedAt = isoAt(0);
     invoice.updatedBy = actorId || null;
     this.save();
@@ -873,6 +900,38 @@ const DB = {
     this.recordAudit('fees.invoice', 'Set the fee invoice of ' + student.name + ' (' + (student.admissionNo || '') + ') to Ksh. ' +
       invoice.total.toLocaleString('en-KE') + ' for ' + invoice.termLabel + '.', this.user(actorId));
     return { ok: true, invoice };
+  },
+
+  /* Campus admin sets the fee balance of one student directly. The invoice
+     gets an adjustment so that  fee billed - verified paid = balance. */
+  setStudentBalance(studentId, balance, actorId, note) {
+    const actor = this.user(actorId);
+    const student = this.user(studentId);
+    if (!actor || actor.role !== 'campus_admin') return { error: 'forbidden' };
+    if (!student || student.role !== 'student') return { error: 'student' };
+    if (actor.campus !== student.campus) return { error: 'campus' };
+    const target = Math.round(Number(balance));
+    if (!isFinite(target) || target < 0 || target > 100000000) return { error: 'amount' };
+    this.ensureInvoice(student);
+    const invoice = this.invoiceFor(studentId, this.data.meta.termCode);
+    if (!invoice) return { error: 'invoice' };
+    const before = this.feeSummary(studentId);
+    const itemsSum = invoice.items.reduce((a, b) => a + b.amount, 0);
+    const paid = before.paid;
+    invoice.adjustment = paid + target - itemsSum;
+    invoice.total = itemsSum + invoice.adjustment;
+    invoice.adjustmentNote = String(note || '').trim().slice(0, 200);
+    invoice.updatedAt = isoAt(0);
+    invoice.updatedBy = actorId;
+    this.save();
+    this.addNotice({
+      title: 'Fee balance updated', type: 'system',
+      message: 'Your fee balance was set to Ksh. ' + target.toLocaleString('en-KE') + ' by the campus administration.' + (invoice.adjustmentNote ? ' Note: ' + invoice.adjustmentNote : ''),
+      userId: studentId, createdBy: actorId
+    });
+    this.recordAudit('fees.balance', 'Set the fee balance of ' + student.name + ' (' + (student.admissionNo || '') + ') from Ksh. ' +
+      before.balance.toLocaleString('en-KE') + ' to Ksh. ' + target.toLocaleString('en-KE') + '.', actor);
+    return { ok: true, balance: target, previous: before.balance };
   },
 
   settings(user) {
@@ -1201,6 +1260,12 @@ const DB = {
     return (this.data.checkins || []).find(c => c.studentId === studentId && c.date === key) || null;
   },
 
+  /* A student's own check-in history (read-only), newest first. */
+  checkinsOf(studentId, limit) {
+    return (this.data.checkins || []).filter(c => c.studentId === studentId)
+      .sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, limit || 30);
+  },
+
   checkinsFor(date) {
     const key = date || localDateKey();
     return (this.data.checkins || []).filter(c => c.date === key);
@@ -1208,6 +1273,8 @@ const DB = {
 
   recordCheckin(studentId, kind, opts) {
     opts = opts || {};
+    const actor = this.user(opts.actorId);
+    if (!actor || actor.role !== 'secretary') return { error: 'forbidden' };
     const student = this.user(studentId);
     if (!student || student.role !== 'student' || student.status !== 'active') return { error: 'student' };
     const status = this.checkinStatus();
@@ -1246,17 +1313,19 @@ const DB = {
     return { ok: true, record: rec };
   },
 
-  deskCheckin(admissionNo, kind, secretaryId) {
+  deskCheckin(admissionNo, kind, secretaryId, biometricVerified) {
     const key = String(admissionNo || '').trim().toUpperCase();
     if (!key) return { error: 'student' };
     const student = this.data.users.find(u => u.role === 'student' && String(u.admissionNo || '').toUpperCase() === key);
     if (!student) return { error: 'student' };
-    return this.recordCheckin(student.id, kind, { actorId: secretaryId, method: 'desk', override: true, biometricVerified: false });
+    return this.recordCheckin(student.id, kind, { actorId: secretaryId, method: biometricVerified ? 'biometric' : 'desk', override: true, biometricVerified: !!biometricVerified });
   },
 
   setBiometricCredential(userId, record) {
     const user = this.user(userId);
     if (!user) return { error: 'missing' };
+    const by = this.currentUser();
+    if (!by || by.role !== 'secretary') return { error: 'forbidden' };
     user.bioCredentialId = record.credentialId;
     user.bioAlg = record.alg;
     user.bioPublicKey = record.publicKey || '';
@@ -1264,13 +1333,15 @@ const DB = {
     this.save();
     const actor = this.currentUser();
     this.recordAudit('biometric.register', 'Registered biometric check-in for ' + user.name + ' (' + (user.admissionNo || '') + ')' +
-      (actor && actor.role === 'secretary' ? ' at the secretary desk.' : ' on their own device.'), actor);
+      (' at the secretary desk.'), actor);
     return { ok: true };
   },
 
   clearBiometricCredential(userId) {
     const user = this.user(userId);
     if (!user) return;
+    const by = this.currentUser();
+    if (!by || by.role !== 'secretary') return;
     delete user.bioCredentialId; delete user.bioAlg; delete user.bioPublicKey; delete user.bioRegisteredAt;
     this.save();
     this.recordAudit('biometric.remove', 'Removed the biometric registration of ' + user.name + ' (' + (user.admissionNo || '') + ').', this.currentUser());
@@ -1290,6 +1361,7 @@ const DB = {
     const amt = Number(amount);
     if (!amt || amt <= 0 || !String(reference || '').trim()) return { error: 'invalid' };
     proof = proof && proof.fileId ? proof : null;
+    if (!proof) return { error: 'proof' };
     const payment = {
       id: uid('pay'), studentId, amount: amt, method: method || 'M-Pesa',
       reference: String(reference).trim().toUpperCase(), status: 'pending', createdAt: isoAt(0),
@@ -1465,12 +1537,13 @@ const DB = {
       .map(u => Object.assign({}, u, { presence: this.presenceOf(u.id) }));
   },
   pendingUsers() { return this.data.users.filter(u => u.status === 'pending'); },
-  recentPendingPayments() { return this.data.payments.filter(p => p.status === 'pending').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); },
-  financeSummary() {
-    const all = this.data.payments;
+  recentPendingPayments(campus) { return this.paymentsForCampus(campus).filter(p => p.status === 'pending').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); },
+  financeSummary(campus) {
+    const all = this.paymentsForCampus(campus);
     const pending = all.filter(p => p.status === 'pending');
     const verified = all.filter(p => p.status === 'verified');
-    const billed = this.data.invoices.reduce((a, b) => a + b.total, 0);
+    const ids = (!campus || campus === ALL_CAMPUSES) ? null : this.data.users.filter(u => u.campus === campus).map(u => u.id);
+    const billed = this.data.invoices.filter(i => !ids || ids.indexOf(i.studentId) !== -1).reduce((a, b) => a + b.total, 0);
     return {
       pending: pending.reduce((a, b) => a + b.amount, 0),
       pendingCount: pending.length,

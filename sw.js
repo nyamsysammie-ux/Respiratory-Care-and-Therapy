@@ -1,5 +1,5 @@
 /* TSMHST Portal service worker — offline shell for the installable app */
-const CACHE = 'tsmhst-portal-v1.11.0';
+const CACHE = 'tsmhst-portal-v1.12.0';
 
 const CORE = [
   './',

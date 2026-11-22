@@ -405,7 +405,7 @@ function canManageUser(actor, target) {
 function renderUsers(user) {
   if (!user || user.role === 'student' || user.role === 'council' || user.role === 'owner') return renderHome(user);
   const scope = user.role === 'campus_admin' ? user.campus : (isExecRole(user.role) ? ALL_CAMPUSES : user.campus);
-  const users = DB.usersForCampus(scope).slice().sort((a, b) => a.name.localeCompare(b.name));
+  const users = DB.usersForCampus(scope).filter(u => u.status !== 'removed').slice().sort((a, b) => a.name.localeCompare(b.name));
   const counts = { all: users.length, student: 0, lecturer: 0, council: 0, admin: 0 };
   users.forEach(u => { if (u.role === 'student') counts.student++; else if (u.role === 'lecturer') counts.lecturer++; else if (u.role === 'council') counts.council++; else if (isAdminRole(u.role)) counts.admin++; });
   return `${pageHead(I18N.t('Users'), scope === ALL_CAMPUSES ? 'All portal accounts across every campus' : `Portal accounts at ${scope} campus`,
@@ -428,11 +428,11 @@ function renderUsers(user) {
         <td>${esc(u.programme ? programmeFor(u.programme).short : (u.department || '—'))}</td>
         <td>${statusBadge(u.status === 'active' ? 'active' : u.status)}</td>
         <td>${u.status === 'pending' ? '—' : presence.online ? `<span class="online-text">Online</span>` : (presence.lastSeen ? esc(relative(presence.lastSeen)) : '—')}</td>
-        <td class="row-actions">${canManageUser(user, u) ? `<button type="button" class="btn ${u.status === 'active' ? 'btn-danger-ghost' : 'btn-primary'} btn-xs" data-action="user-toggle" data-user="${u.id}" data-status="${u.status === 'active' ? 'suspended' : 'active'}">${u.status === 'active' ? 'Suspend' : 'Activate'}</button>` : u.status === 'pending' ? `<a class="btn btn-ghost btn-xs" href="#/approvals">Review</a>` : ''}</td>
+        <td class="row-actions"><div class="inline-actions">${canManageUser(user, u) ? `<button type="button" class="btn ${u.status === 'active' ? 'btn-danger-ghost' : 'btn-primary'} btn-xs" data-action="user-toggle" data-user="${u.id}" data-status="${u.status === 'active' ? 'suspended' : 'active'}">${u.status === 'active' ? 'Suspend' : 'Activate'}</button>` : u.status === 'pending' ? `<a class="btn btn-ghost btn-xs" href="#/approvals">Review</a>` : ''}${DB.canRemove(user, u) ? `<button type="button" class="btn btn-danger-ghost btn-xs" data-action="user-remove" data-user="${u.id}">${icon('trash')} Remove</button>` : ''}</div></td>
       </tr>`;
     }).join('')}</tbody>
   </table></div></div>
-  <p class="page-note">${icon('shield')} Suspending an account immediately prevents sign-in. You can only manage accounts within your office’s scope; owners and other administrators cannot be suspended from this screen.</p>`;
+  <p class="page-note">${icon('shield')} Suspending an account immediately prevents sign-in. You can only manage accounts within your office’s scope; owners and other administrators cannot be suspended from this screen. ${user.role === 'campus_admin' ? 'You can remove students from the portal.' : user.role === 'principal' ? 'You can remove lecturers from the portal.' : user.role === 'director' ? 'You can remove administrators from the portal.' : ''}</p>`;
 }
 
 function renderCheckin(user) {
@@ -503,7 +503,7 @@ function renderCheckin(user) {
       <button type="button" class="btn btn-primary" data-action="bio-desk-register">${icon('shield')} Register fingerprint</button>
       <button type="button" class="btn btn-danger-ghost" data-action="bio-desk-clear">Clear registration</button>
     </div>
-    <p class="demo-note">${icon('info')} The student taps the button and follows the fingerprint prompt on this device. ${registered} student(s) enrolled so far. Re-registering replaces an earlier one — for example one made on the student's own phone.</p>
+    <p class="demo-note">${icon('info')} The student places their finger on this device when prompted. ${registered} student(s) enrolled so far. Re-registering replaces an earlier one. When a student has a fingerprint enrolled, check-in and check-out ask for it.</p>
   </div>
   <div class="card table-card">
     <div class="card-head"><div><h2>Today's roll</h2><p class="card-sub">${roster.length} students · ${esc(DB.data.meta.termLabel)}</p></div><span class="chip chip-soft">${stats.in}/${roster.length} in</span></div>
@@ -523,12 +523,12 @@ function renderCheckin(user) {
       }).join('')}</tbody>
     </table></div>
   </div>
-  <p class="page-note">${icon('shield')} Students verify with the fingerprint or face registered on their own phone (WebAuthn) — or with one enrolled here at the desk. Records sync to other devices when cloud sync is connected; otherwise they stay on this device.</p>`;
+  <p class="page-note">${icon('shield')} Only the secretary registers fingerprints and checks students in or out; students can only view their own check-in records. Records sync to other devices when cloud sync is connected; otherwise they stay on this device.</p>`;
 }
 
 function renderFeesDesk(user) {
   if (!user || !(user.role === 'accounts_clerk' || user.role === 'campus_admin')) return renderHome(user);
-  const scope = user.role === 'campus_admin' ? user.campus : ALL_CAMPUSES;
+  const scope = user.campus;
   const roster = DB.usersForCampus(scope).filter(u => u.role === 'student' && u.status === 'active')
     .slice().sort((a, b) => a.name.localeCompare(b.name));
   let billed = 0, paid = 0, pending = 0, balance = 0, invoiced = 0;
@@ -544,7 +544,7 @@ function renderFeesDesk(user) {
       <td class="right">${money(f.paid)}</td>
       <td class="right">${f.pending ? `<span class="muted-text">${money(f.pending)} pending</span>` : '<span class="muted-text">—</span>'}</td>
       <td class="right"><strong>${money(f.balance)}</strong></td>
-      <td class="row-actions"><button type="button" class="btn btn-primary btn-xs" data-action="feesdesk-open" data-student="${s.id}">${icon('finance')} Fees</button></td>
+      <td class="row-actions"><div class="inline-actions"><button type="button" class="btn btn-primary btn-xs" data-action="feesdesk-open" data-student="${s.id}">${icon('finance')} Fees</button>${user.role === 'campus_admin' ? `<button type="button" class="btn btn-ghost btn-xs" data-action="feesdesk-balance" data-student="${s.id}">${icon('wallet')} Set balance</button>` : ''}</div></td>
     </tr>`;
   }).join('');
   return `${pageHead('Fees desk', `${scope === ALL_CAMPUSES ? 'Every campus' : esc(scope) + ' campus'} · ${esc(DB.data.meta.termLabel)}`,
@@ -553,7 +553,7 @@ function renderFeesDesk(user) {
     ${statCard('Fee per semester (billed)', money(billed), invoiced + ' of ' + roster.length + ' invoiced', 'finance', '')}
     ${statCard('Verified paid', money(paid), 'M-Pesa receipts confirmed', 'checkCircle', 'green')}
     ${statCard('Awaiting verification', money(pending), 'campus admins confirm', 'clock', pending ? 'amber' : '')}
-    ${statCard('Outstanding balance', money(balance), 'across all students', 'wallet', balance > 0 ? 'amber' : 'green')}
+    ${statCard('Outstanding balance', money(balance), 'across students on this campus', 'wallet', balance > 0 ? 'amber' : 'green')}
   </div>
   <div class="toolbar">
     <label class="search-field">${icon('search')}<input id="fees-search" type="search" placeholder="Search name, admission no. or campus" aria-label="Search fee balances"></label>
@@ -563,21 +563,22 @@ function renderFeesDesk(user) {
     <thead><tr><th>Student</th><th>Campus</th><th>Semester</th><th class="right">Fee (semester)</th><th class="right">Paid</th><th class="right">Pending</th><th class="right">Balance</th><th></th></tr></thead>
     <tbody>${rows}</tbody>
   </table></div></div>
-  <p class="page-note">${icon('info')} Tap <strong>Fees</strong> to set what a student is charged this semester — every item and amount. The balance is the fee minus verified M-Pesa payments; the student is notified whenever you change it.</p>`;
+  <p class="page-note">${icon('info')} Tap <strong>Fees</strong> to set what a student is charged this semester — every item and amount.${user.role === 'campus_admin' ? ' Tap <strong>Set balance</strong> to enter a student’s fee balance directly.' : ''} You only see students on your own campus. The balance is the fee minus verified M-Pesa payments; the student is notified whenever you change it.</p>`;
 }
 
 function renderFinance(user) {
   if (!user || user.role !== 'accounts_clerk') return renderHome(user);
-  const finance = DB.financeSummary();
-  const verified = DB.data.payments.filter(p => p.status === 'verified').sort((a, b) => new Date(b.verifiedAt || b.createdAt) - new Date(a.verifiedAt || a.createdAt)).slice(0, 14);
-  const pending = DB.recentPendingPayments();
+  const campus = user.campus;
+  const finance = DB.financeSummary(campus);
+  const verified = DB.paymentsForCampus(campus).filter(p => p.status === 'verified').sort((a, b) => new Date(b.verifiedAt || b.createdAt) - new Date(a.verifiedAt || a.createdAt)).slice(0, 14);
+  const pending = DB.recentPendingPayments(campus);
   const paybills = DB.data.meta.paybills;
-  return `${pageHead(I18N.t('Finance'), 'Finance office — verified payments, cash awaiting verification and billed totals',
+  return `${pageHead(I18N.t('Finance'), esc(campus) + ' campus finance — verified payments, cash awaiting verification and billed totals',
     `<button type="button" class="btn btn-ghost btn-sm" data-action="payments-export">${icon('download')} Export CSV</button><a class="btn btn-ghost btn-sm" href="#/users">${icon('users')} Student accounts</a>`)}
   <div class="stats-grid">
     ${statCard('Verified payments', money(finance.verified), finance.verifiedCount + ' receipts confirmed', 'checkCircle', 'green')}
     ${statCard('Cash awaiting verification', money(finance.pending), finance.pendingCount + ' payments', 'clock', finance.pendingCount ? 'amber' : '')}
-    ${statCard('Billed (all students)', money(finance.billed), 'Current invoices', 'file', 'maroon')}
+    ${statCard('Billed (' + campus + ' students)', money(finance.billed), 'Current invoices', 'file', 'maroon')}
     ${statCard('Collection rate', finance.billed ? Math.round(finance.verified / finance.billed * 100) + '%' : '—', 'Verified against billed', 'chart', '')}
   </div>
   <div class="dash-grid finance-dash">
@@ -606,12 +607,12 @@ function renderFinance(user) {
     </div>
   </div>
   <div class="card">
-    <div class="card-head"><div><h2>Verified payments</h2><p class="card-sub">Latest confirmed receipts across all campuses</p></div><span class="chip chip-soft">${verified.length} shown</span></div>
+    <div class="card-head"><div><h2>Verified payments</h2><p class="card-sub">Latest confirmed receipts for the ${esc(campus)} campus</p></div><span class="chip chip-soft">${verified.length} shown</span></div>
     ${verified.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Student</th><th>Admission no.</th><th>Campus</th><th>Reference</th><th>Date</th><th class="right">Amount</th><th>Status</th></tr></thead>
       <tbody>${verified.map(p => { const s = DB.user(p.studentId); return `<tr><td><span class="person-cell">${avatar(s, 'xs')} ${esc(s ? s.name : '—')}</span></td><td>${esc(s ? s.admissionNo : '—')}</td><td>${esc(s ? s.campus || '—' : '—')}</td><td><code>${esc(p.reference)}</code></td><td>${esc(fmtDate(p.createdAt))}</td><td class="right">${money(p.amount)}</td><td>${statusBadge(p.status)}</td></tr>`; }).join('')}</tbody>
     </table></div>` : `<div class="inline-success">${icon('checkCircle')} No verified payments yet.</div>`}
   </div>
-  <p class="page-note">${icon('lock')} Finance totals — verified, awaiting verification and billed — are visible to the Finance Office only. Campus admins verify individual student payments from the Payments desk.</p>`;
+  <p class="page-note">${icon('lock')} Finance totals — verified, awaiting verification and billed — cover the ${esc(campus)} campus only; you cannot see other campuses. Campus admins verify individual student payments from the Payments desk.</p>`;
 }
 
 function renderPayments(user) {
@@ -675,7 +676,7 @@ function renderCampuses(user) {
 
 const AUDIT_LABELS = {
   'account.approve': 'Account approved', 'account.reject': 'Registration rejected',
-  'account.suspend': 'Account suspended', 'account.activate': 'Account activated',
+  'account.remove': 'Account removed', 'account.suspend': 'Account suspended', 'account.activate': 'Account activated',
   'marks.save': 'Marks saved', 'marks.import': 'Marks imported',
   'results.publish': 'Results published', 'results.unpublish': 'Results unpublished',
   'assignment.create': 'Assignment created', 'assignment.grade': 'Submission graded',

@@ -590,14 +590,11 @@ function renderHome(user) {
   </div>
   ${fees.balance > 0 ? `<div class="alert-strip warn">${icon('alert')}<span>Fee balance: <strong>${money(fees.balance)}</strong>${fees.pending ? ` · ${money(fees.pending)} pending verification` : ''}</span><a href="#/fees">${esc(I18N.t('Pay now'))}</a></div>` : ''}
   <div class="card">
-    <div class="card-head"><div><h2>Daily check-in</h2><p class="card-sub">Gate attendance · ${chk.windows.biometricRequired ? 'verified with biometrics' : 'biometrics optional'}</p></div>${icon('clock')}</div>
-    ${myChk && myChk.checkInAt && myChk.checkOutAt ? `<div class="inline-success">${icon('checkCircle')} Checked in at ${esc(fmtTime(myChk.checkInAt))} and checked out at ${esc(fmtTime(myChk.checkOutAt))}. See you tomorrow!</div>`
-      : myChk && myChk.checkInAt ? `<div class="alert-strip info">${icon('check')}<span>Checked in at <strong>${esc(fmtTime(myChk.checkInAt))}</strong>${myChk.late ? ' · marked late' : ''}.</span></div>
-        <div class="inline-actions"><button type="button" class="btn btn-primary" data-action="self-checkin" data-kind="out">${icon('logout')} Check out</button><small class="muted-text">Check-out window: ${esc(hmLabel(chk.windows.outStart))} – ${esc(hmLabel(chk.windows.outEnd))}</small></div>`
-      : `<div class="inline-actions"><button type="button" class="btn btn-primary" data-action="self-checkin" data-kind="in">${icon('check')} Check in</button><small class="muted-text">Check-in window: ${esc(hmLabel(chk.windows.inStart))} – ${esc(hmLabel(chk.windows.inEnd))}${chk.pausedIn ? ' · paused today' : ''}</small></div>`}
-    <div class="inline-actions">
-      ${user.bioCredentialId ? `<small class="muted-text">${icon('shield')} Fingerprint registered on this device</small><button type="button" class="btn btn-danger-ghost btn-xs" data-action="bio-remove">Remove</button>` : `<small class="muted-text">${icon('shield')} No fingerprint registered yet</small><button type="button" class="btn btn-ghost btn-xs" data-action="bio-register">Register fingerprint</button>`}
-    </div>
+    <div class="card-head"><div><h2>Daily check-in</h2><p class="card-sub">Recorded by the secretary at the college gate · read-only</p></div>${icon('clock')}</div>
+    ${myChk && myChk.checkInAt && myChk.checkOutAt ? `<div class="inline-success">${icon('checkCircle')} Checked in at ${esc(fmtTime(myChk.checkInAt))} and checked out at ${esc(fmtTime(myChk.checkOutAt))}.</div>`
+      : myChk && myChk.checkInAt ? `<div class="alert-strip info">${icon('check')}<span>Checked in at <strong>${esc(fmtTime(myChk.checkInAt))}</strong>${myChk.late ? ' · marked late' : ''}. Not checked out yet.</span></div>`
+      : `<div class="alert-strip info">${icon('clock')}<span>Not checked in today. The secretary checks you in at the gate (${esc(hmLabel(chk.windows.inStart))} – ${esc(hmLabel(chk.windows.inEnd))}).</span></div>`}
+    ${(() => { const hist = DB.checkinsOf(user.id, 7); return hist.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Check-in</th><th>Check-out</th><th>Method</th></tr></thead><tbody>${hist.map(c => `<tr><td>${esc(c.date)}</td><td>${c.checkInAt ? esc(fmtTime(c.checkInAt)) + (c.late ? ' <span class="muted-text">(late)</span>' : '') : '—'}</td><td>${c.checkOutAt ? esc(fmtTime(c.checkOutAt)) : '—'}</td><td>${esc(c.inMethod === 'biometric' ? 'Fingerprint' : c.inMethod === 'desk' ? 'Secretary desk' : c.inMethod || '—')}</td></tr>`).join('')}</tbody></table></div>` : ''; })()}
   </div>
   <div class="stats-grid">
     ${statCard(I18N.t('Your attendance'), attendance.percent + '%', `${attendance.attended}/${attendance.held} sessions`, 'check', 'green')}

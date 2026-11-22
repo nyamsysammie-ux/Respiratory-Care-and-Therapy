@@ -187,6 +187,7 @@ function bindGlobalEvents() {
     if (t.id === 'marks-search') { filterRows('[data-search-row]', t.value); return; }
     if (t.id === 'users-search') { filterUsers(); return; }
     if (t.id === 'fees-search') { filterRows('[data-fee-row]', t.value); return; }
+    if (t.id === 'cloud-type') { toggleCloudFields(); return; }
     if (t.id === 'course-search') { filterCourses(); return; }
     if (t.id === 'language-search') { filterLanguages(t.value); return; }
   });
@@ -339,25 +340,6 @@ async function handleAction(action, el, event) {
     case 'pay-fees':
       openPayModal();
       return;
-    case 'self-checkin':
-      if (!user || user.role !== 'student') return;
-      await handleSelfCheckin(user, el.dataset.kind);
-      return;
-    case 'bio-register': {
-      if (!user || user.role !== 'student') return;
-      const reg = await Bio.register(user);
-      if (!reg.ok) { toast(bioErrorText(reg.error), 'error'); return; }
-      DB.setBiometricCredential(user.id, reg.record);
-      toast('Fingerprint/face registered for check-in on this device.', 'success');
-      render();
-      return;
-    }
-    case 'bio-remove':
-      if (!user || user.role !== 'student' || !user.bioCredentialId) return;
-      DB.clearBiometricCredential(user.id);
-      toast('Biometric check-in removed from this device.', 'info');
-      render();
-      return;
     case 'bio-desk-register': {
       if (!user || user.role !== 'secretary') return;
       const bioInput = document.getElementById('bio-adm');
@@ -393,10 +375,19 @@ async function handleAction(action, el, event) {
       if (!user || user.role !== 'secretary') return;
       const input = document.getElementById('checkin-adm');
       const kind = el.dataset.kind === 'out' ? 'out' : 'in';
-      const result = DB.deskCheckin(input ? input.value : '', kind, user.id);
+      const admKey = String(input ? input.value : '').trim().toUpperCase();
+      const target = DB.data.users.find(u => u.role === 'student' && String(u.admissionNo || '').toUpperCase() === admKey);
+      let verified = false;
+      if (target && target.bioCredentialId && DB.checkinWindows().biometricRequired) {
+        toast('Ask ' + target.name + ' to place their finger on this device’s sensor.', 'info');
+        const check = await Bio.verify(target);
+        if (!check.ok) { toast(bioErrorText(check.error), 'error'); return; }
+        verified = true;
+      }
+      const result = DB.deskCheckin(input ? input.value : '', kind, user.id, verified);
       if (result.error) { toast(checkinErrorText(result), 'error'); return; }
       const student = DB.user(result.record.studentId);
-      toast((kind === 'in' ? 'Checked in: ' : 'Checked out: ') + (student ? student.name : 'student') + ' at the desk.', 'success');
+      toast((kind === 'in' ? 'Checked in: ' : 'Checked out: ') + (student ? student.name : 'student') + (verified ? ' (fingerprint verified).' : ' at the desk.'), 'success');
       if (input) input.value = '';
       render();
       return;
@@ -425,15 +416,25 @@ async function handleAction(action, el, event) {
       if (!user || user.role !== 'secretary') return;
       render();
       return;
-    case 'feesdesk-open':
+    case 'feesdesk-open': {
       if (!user || !(user.role === 'accounts_clerk' || user.role === 'campus_admin')) return;
+      const fStudent = DB.user(el.dataset.student);
+      if (!fStudent || fStudent.campus !== user.campus) { toast('That student belongs to another campus.', 'error'); return; }
       openInvoiceEditor(el.dataset.student);
       return;
+    }
+    case 'feesdesk-balance': {
+      if (!user || user.role !== 'campus_admin') return;
+      const bStudent = DB.user(el.dataset.student);
+      if (!bStudent || bStudent.campus !== user.campus) { toast('That student belongs to another campus.', 'error'); return; }
+      openBalanceEditor(bStudent.id);
+      return;
+    }
     case 'invoice-create': {
       if (!user || !(user.role === 'accounts_clerk' || user.role === 'campus_admin')) return;
       const student = DB.user(el.dataset.student);
       if (!student) return;
-      if (user.role === 'campus_admin' && student.campus !== user.campus) { toast('That student belongs to another campus.', 'error'); return; }
+      if (student.campus !== user.campus) { toast('That student belongs to another campus.', 'error'); return; }
       DB.ensureInvoice(student);
       openInvoiceEditor(student.id);
       return;
@@ -524,6 +525,16 @@ async function handleAction(action, el, event) {
       DB.rejectUser(target.id, user.id);
       toast('Registration rejected.', 'info');
       render();
+      return;
+    }
+    case 'user-remove': {
+      const rTarget = DB.user(el.dataset.user);
+      if (!user || !rTarget || !DB.canRemove(user, rTarget)) { toast('You are not allowed to remove this account.', 'error'); return; }
+      modal('Remove from portal', `<form data-form="remove-user" data-user="${esc(rTarget.id)}">
+        <p class="modal-lead">Remove <strong>${esc(rTarget.name)}</strong> (${esc(ROLE_LABELS[rTarget.role] || rTarget.role)}) from the portal? They will not be able to sign in again. Their marks, payments and other records are kept for the college archive.</p>
+        <label class="field"><span>Reason (shown in the audit trail)</span><input name="reason" maxlength="200" placeholder="e.g. Left the college" required></label>
+        <div class="modal-actions"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('trash')} Remove from portal</button></div>
+      </form>`);
       return;
     }
     case 'user-toggle': {
@@ -1056,59 +1067,23 @@ async function publishCurrentUnit() {
 function bioErrorText(code) {
   return {
     unsupported: 'This browser does not support biometric authentication. Open the portal in Chrome over HTTPS.',
-    'no-sensor': 'This device has no fingerprint or face sensor. Ask the secretary to check you in at the desk.',
+    'no-sensor': 'This device has no fingerprint or face sensor.',
     cancelled: 'Biometric prompt cancelled — nothing was recorded.',
     'already-registered': 'A biometric credential is already registered on this device.',
-    'not-registered': 'No fingerprint is registered for your account on this device.',
-    failed: 'Biometric verification failed. Try again or see the secretary at the desk.'
+    'not-registered': 'No fingerprint is registered for this student.',
+    failed: 'Biometric verification failed. Try again.'
   }[code] || 'Biometric check could not be completed.';
 }
 
 function checkinErrorText(result) {
   if (result.error === 'student') return 'No active student matches that admission number.';
   if (result.error === 'paused') return 'The secretary has paused ' + result.label + 's for today.';
-  if (result.error === 'closed') return 'The ' + result.label + ' window is ' + result.window + '. Self-service is only possible inside the window.';
+  if (result.error === 'closed') return 'The ' + result.label + ' window is ' + result.window + '.';
+  if (result.error === 'forbidden') return 'Only the secretary can check students in or out.';
   if (result.error === 'biometric') return 'Fingerprint or face verification is required to check in.';
   if (result.error === 'no-checkin') return 'That student has not checked in today, so they cannot check out.';
   if (result.error === 'already') return 'This student has ' + (result.label || 'already been recorded') + '.';
   return 'The check-in could not be recorded.';
-}
-
-async function handleSelfCheckin(user, kind) {
-  const status = DB.checkinStatus();
-  const action = kind === 'out' ? 'out' : 'in';
-  const label = action === 'in' ? 'check-in' : 'check-out';
-  if (action === 'in' && status.pausedIn) { toast('The secretary has paused check-ins for today.', 'info'); return; }
-  if (action === 'out' && status.pausedOut) { toast('The secretary has paused check-outs for today.', 'info'); return; }
-  if (action === 'in' && !status.inOpen) { toast('Check-in is only open ' + hmLabel(status.windows.inStart) + ' – ' + hmLabel(status.windows.inEnd) + '.', 'info'); return; }
-  if (action === 'out' && !status.outOpen) { toast('Check-out opens at ' + hmLabel(status.windows.outStart) + '.', 'info'); return; }
-  let verified = false;
-  let method = 'self';
-  const wantsBiometric = status.windows.biometricRequired || !!user.bioCredentialId;
-  if (wantsBiometric) {
-    if (!user.bioCredentialId) {
-      const ok = await confirmDialog({
-        title: 'Register your fingerprint',
-        message: 'Check-in needs your fingerprint or face. Your phone will ask for it once to set it up. No sensor on this phone? Ask the secretary to check you in at the desk instead.',
-        confirmText: 'Set up now'
-      });
-      if (!ok) return;
-      const reg = await Bio.register(user);
-      if (!reg.ok) { toast(bioErrorText(reg.error), 'error'); return; }
-      DB.setBiometricCredential(user.id, reg.record);
-      toast('Fingerprint/face registered. Check-in is now verified with biometrics.', 'success');
-    }
-    const check = await Bio.verify(user);
-    if (!check.ok) { toast(bioErrorText(check.error), 'error'); return; }
-    verified = true;
-    method = 'biometric';
-  }
-  const result = DB.recordCheckin(user.id, action, { actorId: user.id, method, biometricVerified: verified });
-  if (result.error) { toast(checkinErrorText(result), 'error'); return; }
-  toast(action === 'in'
-    ? 'Checked in' + (result.record.late ? ' — marked late.' : '.')
-    : 'Checked out. See you tomorrow!', 'success');
-  render();
 }
 
 function exportCheckinCSV(user) {
@@ -1140,13 +1115,13 @@ function openPayModal() {
     <div><span>${esc(I18N.t('Account number'))}</span><strong>${esc(account)}</strong><button type="button" class="icon-btn tiny" data-action="copy" data-copy="${esc(account)}">${icon('copy')}</button></div>
     <div><span>${esc(I18N.t('Outstanding'))}</span><strong>${money(fees.balance)}</strong></div>
   </div>
-  <p class="muted-text">Pay via M-Pesa Lipa na M-Pesa → Pay Bill using the paybill and account above, then record the M-Pesa code below. Finance will verify it and update your balance.</p>
+  <p class="muted-text">Pay via M-Pesa Lipa na M-Pesa → Pay Bill using the paybill and account above, then enter the M-Pesa code and attach a screenshot of the M-Pesa message below. Your payment is only sent for verification when the screenshot is attached.</p>
   <form data-form="pay-fees" class="form-grid">
     <label class="field"><span>${esc(I18N.t('Amount'))} (Ksh.)</span><input name="amount" type="number" min="1" step="1" value="${fees.balance || ''}" required></label>
     <label class="field"><span>${esc(I18N.t('M-Pesa code'))} / ${esc(I18N.t('Reference'))}</span><input name="reference" required minlength="4" placeholder="e.g. QK84LM92TX" autocomplete="off"></label>
-    <label class="field form-span"><span>Attach M-Pesa proof (optional — screenshot or PDF of the message, max ${Math.round((typeof Sync !== 'undefined' ? Sync.fileCap() : 20 * 1024 * 1024) / (1024 * 1024))} MB)</span><input type="file" name="proof" accept="image/*,application/pdf,.png,.jpg,.jpeg,.webp,.pdf"></label>
-    <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} ${esc(I18N.t('Record payment'))}</button></div>
-  </form><p class="demo-note">${icon('info')} Attaching a screenshot or PDF of your M-Pesa message lets the campus admin verify against the real evidence instead of the typed code only.</p>`);
+    <label class="field form-span"><span>Screenshot of the M-Pesa message (required — image or PDF, max ${Math.round((typeof Sync !== 'undefined' ? Sync.fileCap() : 20 * 1024 * 1024) / (1024 * 1024))} MB)</span><input type="file" name="proof" required accept="image/*,application/pdf,.png,.jpg,.jpeg,.webp,.pdf"></label>
+    <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} Send for verification</button></div>
+  </form><p class="demo-note">${icon('info')} The campus admin verifies your payment against this screenshot. Payments without a screenshot are not accepted.</p>`);
 }
 
 async function openPaymentProof(paymentId) {
@@ -1154,7 +1129,8 @@ async function openPaymentProof(paymentId) {
   const payment = DB.data.payments.find(p => p.id === paymentId);
   if (!payment || !user) return;
   const student = DB.user(payment.studentId);
-  const canView = user.id === payment.studentId || canVerifyPayments(user) || isExecRole(user.role) || user.role === 'accounts_clerk';
+  const sameCampus = !!student && student.campus === user.campus;
+  const canView = user.id === payment.studentId || (canVerifyPayments(user) && sameCampus) || isExecRole(user.role) || (user.role === 'accounts_clerk' && sameCampus);
   if (!canView) return;
   if (!payment.proofFileId) { toast('No proof was attached to this payment.', 'info'); return; }
   const blob = await Blobs.get(payment.proofFileId);
@@ -1206,45 +1182,76 @@ function openCloudSyncModal() {
   if (typeof Sync === 'undefined') { toast('Cloud sync module is not loaded.', 'error'); return; }
   const cfg = DB.data.meta.cloud || {};
   const connected = Sync.configured();
-  modal('Cloud sync (Supabase)', `<form data-form="save-cloud" class="form-grid">
-    <p class="modal-lead">Connect a free Supabase project so documents, payment proofs and assignment files reach every device — and the per-file cap rises to 50 MB. Without it, everything stays on this device only.</p>
-    <div class="info-card">${icon(connected ? 'checkCircle' : 'info')}<div><strong>${connected ? 'Connected' : 'Not connected'}</strong><p>${connected ? 'Last sync: ' + esc(Sync.lastSyncedAt() ? fmtDate(Sync.lastSyncedAt(), true) : 'never') + '. Push and pull run automatically in the background.' : 'Run the one-time setup SQL first, then paste the project details below.'}</p></div></div>
-    <label class="field form-span"><span>Project URL</span><input name="url" value="${esc(cfg.url || '')}" placeholder="https://your-project.supabase.co" autocomplete="off"></label>
-    <label class="field form-span"><span>Anon public key</span><input name="key" value="${esc(cfg.key || '')}" placeholder="eyJhbGciOi…" autocomplete="off"></label>
-    <label class="field"><span>Storage bucket</span><input name="bucket" value="${esc(cfg.bucket || 'portal-files')}"></label>
-    <label class="checkline form-span"><input type="checkbox" name="enabled" ${cfg.enabled !== false && (cfg.url || cfg.key) ? 'checked' : ''}> <span>Sync enabled (untick to pause without losing the settings)</span></label>
+  const type = cfg.type === 'server' ? 'server' : 'supabase';
+  modal('Cloud sync', `<form data-form="save-cloud" class="form-grid">
+    <p class="modal-lead">Connect a backend so documents, payment proofs, assignment files and check-ins reach every device — and the per-file cap rises to 50 MB. Choose the college's MongoDB sync server, or a free Supabase project. Without either, everything stays on this device only.</p>
+    <div class="info-card">${icon(connected ? 'checkCircle' : 'info')}<div><strong>${connected ? 'Connected' : 'Not connected'}</strong><p>${connected ? 'Last sync: ' + esc(Sync.lastSyncedAt() ? fmtDate(Sync.lastSyncedAt(), true) : 'never') + '. Push and pull run automatically in the background.' : 'For MongoDB: start the sync server on the ICT machine first. For Supabase: run the one-time setup SQL, then paste the project details.'}</p></div></div>
+    <label class="field form-span"><span>Backend</span><select name="type" id="cloud-type">
+      <option value="server" ${type === 'server' ? 'selected' : ''}>MongoDB sync server (college ICT)</option>
+      <option value="supabase" ${type === 'supabase' ? 'selected' : ''}>Supabase (free cloud project)</option>
+    </select></label>
+    <label class="field form-span"><span id="cloud-url-label">Server URL</span><input name="url" id="cloud-url" value="${esc(cfg.url || '')}" placeholder="http://192.168.1.20:3000" autocomplete="off"></label>
+    <label class="field form-span" id="cloud-key-row"><span>Supabase anon public key</span><input name="key" value="${esc(cfg.key || '')}" placeholder="eyJhbGciOi…" autocomplete="off"></label>
+    <label class="field form-span" id="cloud-bucket-row"><span>Supabase storage bucket</span><input name="bucket" value="${esc(cfg.bucket || 'portal-files')}"></label>
+    <label class="checkline form-span"><input type="checkbox" name="enabled" ${cfg.enabled !== false && cfg.url ? 'checked' : ''}> <span>Sync enabled (untick to pause without losing the settings)</span></label>
     <div class="inline-actions form-span">
       <button type="button" class="btn btn-ghost btn-sm" data-action="cloud-sql">${icon('download')} Download setup SQL</button>
       <button type="button" class="btn btn-ghost btn-sm" data-action="cloud-sync-now">${icon('refresh')} Sync now</button>
     </div>
     <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} Save cloud settings</button></div>
   </form>
-  <p class="demo-note">${icon('info')} Steps: create a free project at supabase.com → SQL Editor → run the setup SQL (it creates the cloud_records table and the portal-files bucket) → Settings → API → copy the Project URL and anon public key here. The key ships inside the app, so treat the synced data as portal-internal and rotate the key if it ever leaks.</p>`);
+  <p class="demo-note" id="cloud-note">${icon('info')} MongoDB: on the ICT computer run <code>npm install mongodb</code> then <code>node server.js</code> from the server folder that ships with this release. It listens on port 3000 and stores records and files in the MongoDB database on port 27017. Paste the address here as <code>http://&lt;that-computer's-ip&gt;:3000</code>. The MongoDB collections are created automatically on first connect.</p>`);
+}
+
+function toggleCloudFields() {
+  const select = document.getElementById('cloud-type');
+  if (!select) return;
+  const server = select.value === 'server';
+  const urlLabel = document.getElementById('cloud-url-label');
+  const urlInput = document.getElementById('cloud-url');
+  const keyRow = document.getElementById('cloud-key-row');
+  const bucketRow = document.getElementById('cloud-bucket-row');
+  const note = document.getElementById('cloud-note');
+  if (urlLabel) urlLabel.textContent = server ? 'Server URL (with port)' : 'Supabase project URL';
+  if (urlInput) urlInput.placeholder = server ? 'http://192.168.1.20:3000' : 'https://your-project.supabase.co';
+  if (keyRow) keyRow.hidden = server;
+  if (bucketRow) bucketRow.hidden = server;
+  if (note) note.innerHTML = server
+    ? icon('info') + " MongoDB: on the ICT computer run <code>npm install mongodb</code> then <code>node server.js</code> from the server folder that ships with this release. It listens on port 3000 and stores records and files in the MongoDB database on port 27017. Paste the address here as <code>http://SERVER-IP:3000</code> using the sync computer's IP address. The MongoDB collections are created automatically on first connect."
+    : icon('info') + ' Steps: create a free project at supabase.com → SQL Editor → run the setup SQL (it creates the cloud_records table and the portal-files bucket) → Settings → API → copy the Project URL and anon public key here. The key ships inside the app, so treat the synced data as portal-internal and rotate the key if it ever leaks.';
 }
 
 async function saveCloudSettings(form, user) {
   const fd = new FormData(form);
+  const type = String(fd.get('type') || 'supabase') === 'server' ? 'server' : 'supabase';
   const url = String(fd.get('url') || '').trim().replace(/\/+$/, '');
   const key = String(fd.get('key') || '').trim();
   const bucket = String(fd.get('bucket') || 'portal-files').trim() || 'portal-files';
   const enabled = !!fd.get('enabled');
-  if (url && !/^https:\/\/[a-z0-9-]+\.supabase\.co/i.test(url)) {
-    toast('The project URL looks wrong. It should be https://xxxx.supabase.co.', 'error');
-    return;
+  if (type === 'server') {
+    if (url && !/^https?:\/\//i.test(url)) {
+      toast('The server address must start with http:// or https:// and include the port, e.g. http://192.168.1.20:3000.', 'error');
+      return;
+    }
+  } else {
+    if (url && !/^https:\/\/[a-z0-9-]+\.supabase\.co/i.test(url)) {
+      toast('The project URL looks wrong. It should be https://xxxx.supabase.co.', 'error');
+      return;
+    }
+    if (url && key.length < 30) {
+      toast('Paste the full anon public key from Supabase → Settings → API.', 'error');
+      return;
+    }
   }
-  if (url && key.length < 30) {
-    toast('Paste the full anon public key from Supabase → Settings → API.', 'error');
-    return;
-  }
-  if (url && key) {
+  if (url && (type === 'supabase' ? key : true)) {
     toast('Testing the connection…', 'info');
-    const test = await Sync.testConnection(url, key);
+    const test = await Sync.testConnection(url, key, type);
     if (!test.ok) { toast(test.error, 'error'); return; }
   }
-  DB.data.meta.cloud = url && key ? { url, key, bucket, enabled } : null;
+  DB.data.meta.cloud = url ? { type, url, ...(type === 'supabase' ? { key, bucket } : {}), enabled } : null;
   DB.save();
   Sync.reload();
-  toast(url && key ? (enabled ? 'Cloud connected. First sync runs in the background.' : 'Cloud settings saved — sync is paused.') : 'Cloud sync removed. Everything stays on this device.', 'success');
+  toast(url ? (enabled ? 'Cloud connected. First sync runs in the background.' : 'Cloud settings saved — sync is paused.') : 'Cloud sync removed. Everything stays on this device.', 'success');
   closeModal();
   render();
 }
@@ -1281,6 +1288,26 @@ function openInvoiceEditor(studentId) {
     </div>
     <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} Save fee per semester</button></div>
   </form><p class="demo-note">${icon('info')} The balance updates automatically from verified M-Pesa payments. The student is notified whenever the fee changes.</p>`);
+}
+
+function openBalanceEditor(studentId) {
+  const user = DB.currentUser();
+  if (!user || user.role !== 'campus_admin') return;
+  const student = DB.user(studentId);
+  if (!student || student.campus !== user.campus) return;
+  const fees = DB.feeSummary(studentId);
+  modal('Fee balance — ' + student.name, `<form data-form="balance-edit" data-student="${esc(student.id)}" class="form-grid">
+    <p class="modal-lead">${esc(student.admissionNo || '')} · ${esc(student.campus || '')} · ${esc(DB.data.meta.termLabel)}</p>
+    <div class="form-span">
+      ${detailRow('Fee billed this semester', money(fees.billed))}
+      ${detailRow('Verified paid', money(fees.paid))}
+      ${detailRow('Pending verification', money(fees.pending))}
+      ${detailRow('Current balance', money(fees.balance))}
+    </div>
+    <label class="field form-span"><span>Set balance (Ksh.)</span><input name="balance" type="number" min="0" step="1" value="${fees.balance}" required inputmode="numeric"></label>
+    <label class="field form-span"><span>Note for the student (optional)</span><input name="note" maxlength="200" placeholder="e.g. Balance brought forward from last semester"></label>
+    <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} Save balance</button></div>
+  </form><p class="demo-note">${icon('info')} The student sees this balance straight away. Later verified M-Pesa payments reduce it automatically.</p>`);
 }
 
 function openRatingModal() {
@@ -1550,7 +1577,8 @@ async function handleSubmit(form) {
     const proofInput = form.querySelector('input[type="file"]');
     const proofFile = proofInput && proofInput.files[0];
     const proofCap = typeof Sync !== 'undefined' ? Sync.fileCap() : 20 * 1024 * 1024;
-    if (proofFile) {
+    if (!proofFile) { toast('Attach a screenshot of the M-Pesa message — payments without one are not sent for verification.', 'error'); return; }
+    {
       if (proofFile.size > proofCap) { toast('Proof files must be ' + Math.round(proofCap / (1024 * 1024)) + ' MB or smaller.', 'error'); return; }
       if (!(/^(image\/|application\/pdf)/.test(proofFile.type) || /\.(png|jpe?g|webp|pdf)$/i.test(proofFile.name))) {
         toast('Attach a screenshot or PDF of the M-Pesa message.', 'error');
@@ -1566,8 +1594,9 @@ async function handleSubmit(form) {
       }
     }
     const result = DB.recordPayment(user.id, Number(fd.get('amount')), String(fd.get('reference') || ''), 'M-Pesa', proof);
-    if (result.error) { toast('Enter a valid amount and M-Pesa reference.', 'error'); return; }
-    toast(proof ? 'Payment recorded with proof attached. Finance will verify the reference.' : 'Payment recorded. Finance will verify the reference.', 'success');
+    if (result.error === 'proof') { try { await Blobs.del(proof.fileId); } catch (e) { /* ignore */ } toast('The M-Pesa screenshot is required.', 'error'); return; }
+    if (result.error) { try { await Blobs.del(proof.fileId); } catch (e) { /* ignore */ } toast('Enter a valid amount and M-Pesa reference.', 'error'); return; }
+    toast('Payment sent for verification with your M-Pesa screenshot.', 'success');
     closeModal();
     render();
     return;
@@ -1691,7 +1720,7 @@ async function handleSubmit(form) {
     const studentId = form.dataset.student;
     const student = DB.user(studentId);
     if (!student) return;
-    if (user.role === 'campus_admin' && student.campus !== user.campus) { toast('That student belongs to another campus.', 'error'); return; }
+    if (student.campus !== user.campus) { toast('That student belongs to another campus.', 'error'); return; }
     const items = [];
     form.querySelectorAll('[data-item-row]').forEach(row => {
       const del = row.querySelector('.item-del');
@@ -1707,6 +1736,30 @@ async function handleSubmit(form) {
     if (result.error === 'items') { toast('Keep at least one fee item with an amount above zero.', 'error'); return; }
     if (result.error) { toast('The fee invoice could not be saved.', 'error'); return; }
     toast('Fee per semester set to ' + money(result.invoice.total) + ' for ' + student.name + '. Student notified.', 'success');
+    closeModal();
+    render();
+    return;
+  }
+
+  if (kind === 'remove-user') {
+    const rt = DB.user(form.dataset.user);
+    const reason = String(fd.get('reason') || '').trim();
+    if (!rt || !reason) { toast('Please give a reason.', 'error'); return; }
+    const rr = DB.removeUser(rt.id, user.id, reason);
+    if (rr.error) { toast('You are not allowed to remove this account.', 'error'); return; }
+    closeModal();
+    toast(rt.name + ' was removed from the portal.', 'info');
+    render();
+    return;
+  }
+
+  if (kind === 'balance-edit') {
+    if (!user || user.role !== 'campus_admin') return;
+    const result = DB.setStudentBalance(form.dataset.student, fd.get('balance'), user.id, fd.get('note'));
+    const msg = { campus: 'That student belongs to another campus.', amount: 'Enter a balance of zero or more.', forbidden: 'Only a campus admin can set fee balances.' };
+    if (result.error) { toast(msg[result.error] || 'The balance could not be saved.', 'error'); return; }
+    const st = DB.user(form.dataset.student);
+    toast('Fee balance for ' + (st ? st.name : 'student') + ' set to ' + money(result.balance) + '. Student notified.', 'success');
     closeModal();
     render();
     return;
@@ -1964,7 +2017,7 @@ async function importUsersCSV(form) {
 
 function exportFeesDeskCSV(user) {
   if (!user || !(user.role === 'accounts_clerk' || user.role === 'campus_admin')) return;
-  const scope = user.role === 'campus_admin' ? user.campus : ALL_CAMPUSES;
+  const scope = user.campus;
   const roster = DB.usersForCampus(scope).filter(u => u.role === 'student' && u.status === 'active')
     .slice().sort((a, b) => a.name.localeCompare(b.name));
   downloadCSV('TSMHST-fees-' + dateStamp() + '.csv',
@@ -1978,7 +2031,7 @@ function exportFeesDeskCSV(user) {
 
 function exportPaymentsCSV(user) {
   if (!user || !(canVerifyPayments(user) || isExecRole(user.role) || user.role === 'accounts_clerk')) return;
-  const scope = (user.role === 'campus_admin' || user.role === 'principal') ? user.campus : ALL_CAMPUSES;
+  const scope = (user.role === 'campus_admin' || user.role === 'principal' || user.role === 'accounts_clerk') ? user.campus : ALL_CAMPUSES;
   const payments = DB.paymentsForCampus(scope).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
   downloadCSV('TSMHST-payments-' + dateStamp() + '.csv',
     ['Date', 'Student', 'Admission no.', 'Campus', 'Amount (Ksh.)', 'Method', 'Reference', 'Status', 'Verified on'],
