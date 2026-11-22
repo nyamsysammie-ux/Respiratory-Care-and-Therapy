@@ -7,11 +7,11 @@ const ACCESS = {
   deputy_director: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'timetable', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
   general_admin: ['home', 'campuses', 'approvals', 'users', 'quality', 'marks', 'timetable', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
   principal: ['home', 'approvals', 'users', 'payments', 'academics', 'timetable', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  campus_admin: ['home', 'approvals', 'users', 'payments', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  campus_admin: ['home', 'approvals', 'users', 'payments', 'feesdesk', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
   registrar: ['home', 'academics', 'timetable', 'users', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
   exam_officer: ['home', 'marks', 'academics', 'timetable', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
   qa_officer: ['home', 'quality', 'campuses', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  accounts_clerk: ['home', 'finance', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
+  accounts_clerk: ['home', 'finance', 'feesdesk', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
   secretary: ['home', 'checkin', 'announcements', 'users', 'documents', 'team', 'about', 'settings', 'notifications'],
   council: ['home', 'announcements', 'documents', 'team', 'about', 'settings', 'notifications']
 };
@@ -186,6 +186,7 @@ function bindGlobalEvents() {
     if (t.matches('.mark-input')) { recalcMarkRow(t); return; }
     if (t.id === 'marks-search') { filterRows('[data-search-row]', t.value); return; }
     if (t.id === 'users-search') { filterUsers(); return; }
+    if (t.id === 'fees-search') { filterRows('[data-fee-row]', t.value); return; }
     if (t.id === 'course-search') { filterCourses(); return; }
     if (t.id === 'language-search') { filterLanguages(t.value); return; }
   });
@@ -357,6 +358,36 @@ async function handleAction(action, el, event) {
       toast('Biometric check-in removed from this device.', 'info');
       render();
       return;
+    case 'bio-desk-register': {
+      if (!user || user.role !== 'secretary') return;
+      const bioInput = document.getElementById('bio-adm');
+      const adm = String(bioInput ? bioInput.value : '').trim().toUpperCase();
+      const student = DB.data.users.find(u => u.role === 'student' && u.status === 'active' && String(u.admissionNo || '').toUpperCase() === adm);
+      if (!student) { toast('No active student matches that admission number.', 'error'); return; }
+      if (student.bioCredentialId) {
+        const ok = await confirmDialog({ title: 'Replace biometric registration', message: student.name + ' already has a fingerprint registered (on another device). Registering here replaces it — they will use THIS device for check-in from now on.', confirmText: 'Replace', danger: true });
+        if (!ok) return;
+      }
+      const reg = await Bio.register({ id: student.id, name: student.name, admissionNo: student.admissionNo, email: student.email });
+      if (!reg.ok) { toast(bioErrorText(reg.error), 'error'); return; }
+      DB.setBiometricCredential(student.id, reg.record);
+      toast('Fingerprint registered for ' + student.name + ' on this device. They can now check in and out with it.', 'success');
+      if (bioInput) bioInput.value = '';
+      render();
+      return;
+    }
+    case 'bio-desk-clear': {
+      if (!user || user.role !== 'secretary') return;
+      const clrInput = document.getElementById('bio-adm');
+      const clrAdm = String(clrInput ? clrInput.value : '').trim().toUpperCase();
+      const clrStudent = DB.data.users.find(u => u.role === 'student' && String(u.admissionNo || '').toUpperCase() === clrAdm);
+      if (!clrStudent || !clrStudent.bioCredentialId) { toast('No biometric registration found for that admission number.', 'info'); return; }
+      DB.clearBiometricCredential(clrStudent.id);
+      toast('Biometric registration cleared for ' + clrStudent.name + '.', 'info');
+      if (clrInput) clrInput.value = '';
+      render();
+      return;
+    }
     case 'checkin-desk-in':
     case 'checkin-desk-out': {
       if (!user || user.role !== 'secretary') return;
@@ -393,6 +424,23 @@ async function handleAction(action, el, event) {
     case 'checkin-refresh':
       if (!user || user.role !== 'secretary') return;
       render();
+      return;
+    case 'feesdesk-open':
+      if (!user || !(user.role === 'accounts_clerk' || user.role === 'campus_admin')) return;
+      openInvoiceEditor(el.dataset.student);
+      return;
+    case 'invoice-create': {
+      if (!user || !(user.role === 'accounts_clerk' || user.role === 'campus_admin')) return;
+      const student = DB.user(el.dataset.student);
+      if (!student) return;
+      if (user.role === 'campus_admin' && student.campus !== user.campus) { toast('That student belongs to another campus.', 'error'); return; }
+      DB.ensureInvoice(student);
+      openInvoiceEditor(student.id);
+      return;
+    }
+    case 'feesdesk-export':
+      if (!user || !(user.role === 'accounts_clerk' || user.role === 'campus_admin')) return;
+      exportFeesDeskCSV(user);
       return;
     case 'hostel-book': {
       if (!user || user.role !== 'student') return;
@@ -1201,6 +1249,40 @@ async function saveCloudSettings(form, user) {
   render();
 }
 
+/* ---------------- Fees desk (fee per semester & balances) ---------------- */
+
+function openInvoiceEditor(studentId) {
+  const user = DB.currentUser();
+  if (!user || !(user.role === 'accounts_clerk' || user.role === 'campus_admin')) return;
+  const student = DB.user(studentId);
+  if (!student) return;
+  const termCode = DB.data.meta.termCode;
+  const invoice = DB.invoiceFor(studentId, termCode);
+  const fees = DB.feeSummary(studentId);
+  const items = invoice ? invoice.items : [];
+  const rows = items.map((it, i) => `<div class="inline-actions form-span" data-item-row>
+    <input class="control item-label" name="lbl-${i}" value="${esc(it.label)}" placeholder="Item" style="flex:1;min-width:150px">
+    <input class="control item-amount" name="amt-${i}" type="number" min="0" step="1" value="${Number(it.amount) || 0}" style="max-width:150px" inputmode="numeric">
+    <label class="checkline"><input type="checkbox" class="item-del" name="del-${i}"> <span>Remove</span></label>
+  </div>`).join('');
+  modal('Fees — ' + student.name, `<form data-form="invoice-edit" data-student="${student.id}" class="form-grid">
+    <p class="modal-lead">${esc(student.admissionNo || '')} · ${esc(programmeFor(student.programme).short)} · Semester ${esc(student.semester || '')} · ${esc(DB.data.meta.termLabel)}</p>
+    <div class="form-span">
+      ${detailRow('Fee per semester (billed)', money(fees.billed))}
+      ${detailRow('Verified paid', money(fees.paid))}
+      ${detailRow('Pending verification', money(fees.pending))}
+      ${detailRow('Balance', money(fees.balance))}
+    </div>
+    <h4 class="modal-section-title form-span">Fee items — what the student is charged this semester</h4>
+    ${invoice ? rows : `<div class="alert-strip warn form-span">${icon('alert')}<span>No invoice exists for this term yet. Saving will create it.</span></div>`}
+    <div class="inline-actions form-span" data-item-row>
+      <input class="control item-label" name="new-label" placeholder="New item, e.g. Field trip" style="flex:1;min-width:150px">
+      <input class="control item-amount" name="new-amount" type="number" min="0" step="1" placeholder="Ksh." style="max-width:150px" inputmode="numeric">
+    </div>
+    <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} Save fee per semester</button></div>
+  </form><p class="demo-note">${icon('info')} The balance updates automatically from verified M-Pesa payments. The student is notified whenever the fee changes.</p>`);
+}
+
 function openRatingModal() {
   const user = DB.currentUser();
   if (!user) return;
@@ -1604,6 +1686,32 @@ async function handleSubmit(form) {
     return;
   }
 
+  if (kind === 'invoice-edit') {
+    if (!user || !(user.role === 'accounts_clerk' || user.role === 'campus_admin')) return;
+    const studentId = form.dataset.student;
+    const student = DB.user(studentId);
+    if (!student) return;
+    if (user.role === 'campus_admin' && student.campus !== user.campus) { toast('That student belongs to another campus.', 'error'); return; }
+    const items = [];
+    form.querySelectorAll('[data-item-row]').forEach(row => {
+      const del = row.querySelector('.item-del');
+      if (del && del.checked) return;
+      const label = (row.querySelector('.item-label') || {}).value || '';
+      const amount = Number((row.querySelector('.item-amount') || {}).value);
+      if (String(label).trim() && amount > 0) items.push({ label: String(label).trim(), amount: Math.round(amount) });
+    });
+    const newLabel = String(fd.get('new-label') || '').trim();
+    const newAmount = Number(fd.get('new-amount'));
+    if (newLabel && newAmount > 0) items.push({ label: newLabel, amount: Math.round(newAmount) });
+    const result = DB.saveInvoiceItems(studentId, DB.data.meta.termCode, items, user.id);
+    if (result.error === 'items') { toast('Keep at least one fee item with an amount above zero.', 'error'); return; }
+    if (result.error) { toast('The fee invoice could not be saved.', 'error'); return; }
+    toast('Fee per semester set to ' + money(result.invoice.total) + ' for ' + student.name + '. Student notified.', 'success');
+    closeModal();
+    render();
+    return;
+  }
+
   if (kind === 'save-cloud') {
     if (!user || !isAdminRole(user.role)) return;
     await saveCloudSettings(form, user);
@@ -1852,6 +1960,20 @@ async function importUsersCSV(form) {
   } else {
     toast('No accounts were imported — every row was skipped (duplicate emails or missing numbers).', 'error');
   }
+}
+
+function exportFeesDeskCSV(user) {
+  if (!user || !(user.role === 'accounts_clerk' || user.role === 'campus_admin')) return;
+  const scope = user.role === 'campus_admin' ? user.campus : ALL_CAMPUSES;
+  const roster = DB.usersForCampus(scope).filter(u => u.role === 'student' && u.status === 'active')
+    .slice().sort((a, b) => a.name.localeCompare(b.name));
+  downloadCSV('TSMHST-fees-' + dateStamp() + '.csv',
+    ['Student', 'Admission no.', 'Campus', 'Semester', 'Fee (semester)', 'Verified paid', 'Pending', 'Balance'],
+    roster.map(s => {
+      const f = DB.feeSummary(s.id);
+      return [s.name, s.admissionNo || '', s.campus || '', s.semester || '', f.billed, f.paid, f.pending, f.balance];
+    }));
+  toast(roster.length + ' fee balances exported to CSV.', 'success');
 }
 
 function exportPaymentsCSV(user) {

@@ -239,13 +239,13 @@ function renderOfficeHome(user) {
     const pendingPay = payments.filter(p => p.status === 'pending');
     const bookings = DB.hostelBookingsForCampus(user.campus).filter(b => b.status === 'pending');
     return `${pageHead(`${greeting()}, ${user.name.split(' ')[0]}`, `${user.campus} campus administration`,
-      `<a class="btn btn-primary btn-sm" href="#/payments">${icon('wallet')} Payments desk${pendingPay.length ? ` (${pendingPay.length})` : ''}</a>`)}
+      `<a class="btn btn-primary btn-sm" href="#/payments">${icon('wallet')} Payments desk${pendingPay.length ? ` (${pendingPay.length})` : ''}</a><a class="btn btn-ghost btn-sm" href="#/feesdesk">${icon('finance')} Fees desk</a>`)}
     <div class="hero-card staff-hero">
       <div class="hero-copy">
         <span class="eyebrow light">Campus administration</span>
         <h2>${esc(DB.data.meta.termLabel)}</h2>
         <p>${students.length} students · ${pending.length} student registrations to approve · ${bookings.length} hostel requests</p>
-        <div class="hero-actions"><a class="btn btn-light btn-sm" href="#/approvals">${icon('approvals')} Approve students</a><a class="btn btn-outline-light btn-sm" href="#/users">${icon('users')} Campus users</a></div>
+        <div class="hero-actions"><a class="btn btn-light btn-sm" href="#/approvals">${icon('approvals')} Approve students</a><a class="btn btn-outline-light btn-sm" href="#/users">${icon('users')} Campus users</a><a class="btn btn-outline-light btn-sm" href="#/feesdesk">${icon('finance')} Fees desk</a></div>
       </div>
       <div class="hero-metric"><span>Payments to verify</span><strong class="smaller">${pendingPay.length}</strong><small>M-Pesa receipts at ${esc(user.campus)}</small></div>
     </div>
@@ -496,6 +496,15 @@ function renderCheckin(user) {
       <button type="button" class="btn btn-ghost" data-action="checkin-desk-out" data-kind="out">${icon('logout')} Check out</button>
     </div>
   </div>
+  <div class="card">
+    <div class="card-head"><div><h2>Biometric registration</h2><p class="card-sub">Enrol a student's fingerprint on this device — they then check in and out with it</p></div>${icon('shield')}</div>
+    <div class="inline-actions">
+      <input id="bio-adm" class="control" type="text" placeholder="Admission no. e.g. TSMHST/CH/2026/001" style="flex:1;min-width:220px" autocomplete="off">
+      <button type="button" class="btn btn-primary" data-action="bio-desk-register">${icon('shield')} Register fingerprint</button>
+      <button type="button" class="btn btn-danger-ghost" data-action="bio-desk-clear">Clear registration</button>
+    </div>
+    <p class="demo-note">${icon('info')} The student taps the button and follows the fingerprint prompt on this device. ${registered} student(s) enrolled so far. Re-registering replaces an earlier one — for example one made on the student's own phone.</p>
+  </div>
   <div class="card table-card">
     <div class="card-head"><div><h2>Today's roll</h2><p class="card-sub">${roster.length} students · ${esc(DB.data.meta.termLabel)}</p></div><span class="chip chip-soft">${stats.in}/${roster.length} in</span></div>
     <div class="table-wrap"><table class="data-table">
@@ -514,7 +523,47 @@ function renderCheckin(user) {
       }).join('')}</tbody>
     </table></div>
   </div>
-  <p class="page-note">${icon('shield')} Students verify with the fingerprint or face registered on their own phone (WebAuthn). Records sync to other devices when cloud sync is connected; otherwise they stay on this device.</p>`;
+  <p class="page-note">${icon('shield')} Students verify with the fingerprint or face registered on their own phone (WebAuthn) — or with one enrolled here at the desk. Records sync to other devices when cloud sync is connected; otherwise they stay on this device.</p>`;
+}
+
+function renderFeesDesk(user) {
+  if (!user || !(user.role === 'accounts_clerk' || user.role === 'campus_admin')) return renderHome(user);
+  const scope = user.role === 'campus_admin' ? user.campus : ALL_CAMPUSES;
+  const roster = DB.usersForCampus(scope).filter(u => u.role === 'student' && u.status === 'active')
+    .slice().sort((a, b) => a.name.localeCompare(b.name));
+  let billed = 0, paid = 0, pending = 0, balance = 0, invoiced = 0;
+  const rows = roster.map(s => {
+    const f = DB.feeSummary(s.id);
+    billed += f.billed; paid += f.paid; pending += f.pending; balance += f.balance;
+    if (f.billed > 0) invoiced++;
+    return `<tr data-fee-row data-search-text="${esc((s.name + ' ' + (s.admissionNo || '') + ' ' + (s.campus || '')).toLowerCase())}">
+      <td><span class="person-cell">${avatar(s, 'xs')} <strong>${esc(s.name)}</strong></span><br><code class="admission-code">${esc(s.admissionNo || '')}</code></td>
+      <td>${esc(s.campus || '—')}</td>
+      <td>${esc(String(s.semester || '—'))}</td>
+      <td class="right">${money(f.billed)}</td>
+      <td class="right">${money(f.paid)}</td>
+      <td class="right">${f.pending ? `<span class="muted-text">${money(f.pending)} pending</span>` : '<span class="muted-text">—</span>'}</td>
+      <td class="right"><strong>${money(f.balance)}</strong></td>
+      <td class="row-actions"><button type="button" class="btn btn-primary btn-xs" data-action="feesdesk-open" data-student="${s.id}">${icon('finance')} Fees</button></td>
+    </tr>`;
+  }).join('');
+  return `${pageHead('Fees desk', `${scope === ALL_CAMPUSES ? 'Every campus' : esc(scope) + ' campus'} · ${esc(DB.data.meta.termLabel)}`,
+    `<button type="button" class="btn btn-ghost btn-sm" data-action="feesdesk-export">${icon('download')} Export CSV</button>`)}
+  <div class="stats-grid">
+    ${statCard('Fee per semester (billed)', money(billed), invoiced + ' of ' + roster.length + ' invoiced', 'finance', '')}
+    ${statCard('Verified paid', money(paid), 'M-Pesa receipts confirmed', 'checkCircle', 'green')}
+    ${statCard('Awaiting verification', money(pending), 'campus admins confirm', 'clock', pending ? 'amber' : '')}
+    ${statCard('Outstanding balance', money(balance), 'across all students', 'wallet', balance > 0 ? 'amber' : 'green')}
+  </div>
+  <div class="toolbar">
+    <label class="search-field">${icon('search')}<input id="fees-search" type="search" placeholder="Search name, admission no. or campus" aria-label="Search fee balances"></label>
+    <span class="chip chip-soft">${roster.length} student${roster.length === 1 ? '' : 's'}</span>
+  </div>
+  <div class="card table-card"><div class="table-wrap"><table class="data-table">
+    <thead><tr><th>Student</th><th>Campus</th><th>Semester</th><th class="right">Fee (semester)</th><th class="right">Paid</th><th class="right">Pending</th><th class="right">Balance</th><th></th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table></div></div>
+  <p class="page-note">${icon('info')} Tap <strong>Fees</strong> to set what a student is charged this semester — every item and amount. The balance is the fee minus verified M-Pesa payments; the student is notified whenever you change it.</p>`;
 }
 
 function renderFinance(user) {

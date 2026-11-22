@@ -90,6 +90,7 @@ function navGroups(role) {
         { route: 'approvals', label: 'Approvals', icon: 'approvals' },
         { route: 'users', label: 'Users', icon: 'users' },
         { route: 'payments', label: 'Payments', icon: 'wallet' },
+        { route: 'feesdesk', label: 'Fees desk', icon: 'finance' },
         { route: 'documents', label: 'Documents', icon: 'file' }
       ]
     });
@@ -135,6 +136,7 @@ function navGroups(role) {
       label: 'Finance office', items: [
         { route: 'home', label: 'Home', icon: 'home' },
         { route: 'finance', label: 'Finance', icon: 'finance' },
+        { route: 'feesdesk', label: 'Fees desk', icon: 'wallet' },
         { route: 'documents', label: 'Documents', icon: 'file' }
       ]
     });
@@ -177,7 +179,7 @@ function routeTitle(route) {
     settings: 'Settings', notifications: 'Notifications', approvals: 'Approvals', users: 'Users',
     academics: 'Academics', marks: 'Marks studio', finance: 'Finance', announcements: 'Announcements',
     campuses: 'Campuses', payments: 'Payments', quality: 'Service quality',
-    checkin: 'Check-in desk',
+    checkin: 'Check-in desk', feesdesk: 'Fees desk',
     timetable: 'Timetable & exams', documents: 'Document vault'
   };
   return titles[route] || 'Portal';
@@ -227,7 +229,8 @@ function bottomNav(role) {
       home,
       { route: 'approvals', label: 'Approvals', icon: 'approvals' },
       { route: 'users', label: 'Users', icon: 'users' },
-      { route: 'payments', label: 'Payments', icon: 'wallet' }
+      { route: 'payments', label: 'Payments', icon: 'wallet' },
+      { route: 'feesdesk', label: 'Fees desk', icon: 'finance' }
     ],
     registrar: [
       home,
@@ -250,6 +253,7 @@ function bottomNav(role) {
     accounts_clerk: [
       home,
       { route: 'finance', label: 'Finance', icon: 'finance' },
+      { route: 'feesdesk', label: 'Fees desk', icon: 'wallet' },
       { route: 'announcements', label: 'Notices', icon: 'megaphone' },
       { route: 'team', label: 'Team', icon: 'users' }
     ],
@@ -492,6 +496,7 @@ function renderPage(user, route) {
   if (route === 'users') return renderUsers(user);
   if (route === 'checkin') return renderCheckin(user);
   if (route === 'finance') return renderFinance(user);
+  if (route === 'feesdesk') return renderFeesDesk(user);
   if (route === 'payments') return renderPayments(user);
   if (route === 'campuses') return renderCampuses(user);
   if (route === 'quality') return renderQuality(user);

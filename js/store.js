@@ -843,6 +843,38 @@ const DB = {
     this.save();
   },
 
+  /* Finance office / campus admin sets the fee per semester for one
+     student: replaces the invoice items and recalculates the balance. */
+  saveInvoiceItems(studentId, termCode, items, actorId) {
+    const student = this.user(studentId);
+    if (!student || student.role !== 'student') return { error: 'student' };
+    let invoice = this.invoiceFor(studentId, termCode);
+    if (!invoice) {
+      this.ensureInvoice(student);
+      invoice = this.invoiceFor(studentId, termCode);
+    }
+    if (!invoice) return { error: 'invoice' };
+    const clean = (Array.isArray(items) ? items : [])
+      .map(i => ({ label: String(i.label || '').trim(), amount: Math.round(Number(i.amount) || 0) }))
+      .filter(i => i.label && i.amount > 0);
+    if (!clean.length) return { error: 'items' };
+    invoice.items = clean;
+    invoice.total = clean.reduce((a, b) => a + b.amount, 0);
+    invoice.updatedAt = isoAt(0);
+    invoice.updatedBy = actorId || null;
+    this.save();
+    const fees = this.feeSummary(studentId);
+    this.addNotice({
+      title: 'Fee invoice updated', type: 'system',
+      message: 'Your fee invoice for ' + invoice.termLabel + ' was updated. Fee per semester: Ksh. ' +
+        invoice.total.toLocaleString('en-KE') + '. Current balance: Ksh. ' + fees.balance.toLocaleString('en-KE') + '.',
+      userId: studentId, createdBy: actorId || 'u_accounts'
+    });
+    this.recordAudit('fees.invoice', 'Set the fee invoice of ' + student.name + ' (' + (student.admissionNo || '') + ') to Ksh. ' +
+      invoice.total.toLocaleString('en-KE') + ' for ' + invoice.termLabel + '.', this.user(actorId));
+    return { ok: true, invoice };
+  },
+
   settings(user) {
     const u = user || this.currentUser();
     if (!u) return deepCopy(DEFAULT_SETTINGS);
@@ -1230,6 +1262,9 @@ const DB = {
     user.bioPublicKey = record.publicKey || '';
     user.bioRegisteredAt = record.registeredAt;
     this.save();
+    const actor = this.currentUser();
+    this.recordAudit('biometric.register', 'Registered biometric check-in for ' + user.name + ' (' + (user.admissionNo || '') + ')' +
+      (actor && actor.role === 'secretary' ? ' at the secretary desk.' : ' on their own device.'), actor);
     return { ok: true };
   },
 
@@ -1238,6 +1273,7 @@ const DB = {
     if (!user) return;
     delete user.bioCredentialId; delete user.bioAlg; delete user.bioPublicKey; delete user.bioRegisteredAt;
     this.save();
+    this.recordAudit('biometric.remove', 'Removed the biometric registration of ' + user.name + ' (' + (user.admissionNo || '') + ').', this.currentUser());
   },
 
   invoicesFor(studentId) { return this.data.invoices.filter(i => i.studentId === studentId); },
