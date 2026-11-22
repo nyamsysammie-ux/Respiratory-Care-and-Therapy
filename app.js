@@ -187,6 +187,7 @@ function bindGlobalEvents() {
     if (t.id === 'marks-search') { filterRows('[data-search-row]', t.value); return; }
     if (t.id === 'users-search') { filterUsers(); return; }
     if (t.id === 'fees-search') { filterRows('[data-fee-row]', t.value); return; }
+    if (t.id === 'cloud-type') { toggleCloudFields(); return; }
     if (t.id === 'course-search') { filterCourses(); return; }
     if (t.id === 'language-search') { filterLanguages(t.value); return; }
   });
@@ -1200,6 +1201,24 @@ function openCloudSyncModal() {
     <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} Save cloud settings</button></div>
   </form>
   <p class="demo-note" id="cloud-note">${icon('info')} MongoDB: on the ICT computer run <code>npm install mongodb</code> then <code>node server.js</code> from the server folder that ships with this release. It listens on port 3000 and stores records and files in the MongoDB database on port 27017. Paste the address here as <code>http://&lt;that-computer's-ip&gt;:3000</code>. The MongoDB collections are created automatically on first connect.</p>`);
+}
+
+function toggleCloudFields() {
+  const select = document.getElementById('cloud-type');
+  if (!select) return;
+  const server = select.value === 'server';
+  const urlLabel = document.getElementById('cloud-url-label');
+  const urlInput = document.getElementById('cloud-url');
+  const keyRow = document.getElementById('cloud-key-row');
+  const bucketRow = document.getElementById('cloud-bucket-row');
+  const note = document.getElementById('cloud-note');
+  if (urlLabel) urlLabel.textContent = server ? 'Server URL (with port)' : 'Supabase project URL';
+  if (urlInput) urlInput.placeholder = server ? 'http://192.168.1.20:3000' : 'https://your-project.supabase.co';
+  if (keyRow) keyRow.hidden = server;
+  if (bucketRow) bucketRow.hidden = server;
+  if (note) note.innerHTML = server
+    ? icon('info') + ' MongoDB: on the ICT computer run <code>npm install mongodb</code> then <code>node server.js</code> from the server folder that ships with this release. It listens on port 3000 and stores records and files in the MongoDB database on port 27017. Paste the address here as <code>http://SERVER-IP:3000</code> using the sync computer\'s IP address. The MongoDB collections are created automatically on first connect.'
+    : icon('info') + ' Steps: create a free project at supabase.com → SQL Editor → run the setup SQL (it creates the cloud_records table and the portal-files bucket) → Settings → API → copy the Project URL and anon public key here. The key ships inside the app, so treat the synced data as portal-internal and rotate the key if it ever leaks.';
 }
 
 async function saveCloudSettings(form, user) {
