@@ -408,5 +408,6 @@ const DEMO_ACCOUNTS = [
   { role: 'registrar', label: 'Registrar', identifier: 'admin@tsmhst.co.ke', password: 'Admin@2026' },
   { role: 'exam_officer', label: 'Exam Officer', identifier: 'exams@tsmhst.co.ke', password: 'Exams@2026' },
   { role: 'accounts_clerk', label: 'Accounts', identifier: 'accounts@tsmhst.co.ke', password: 'Accounts@2026' },
+  { role: 'secretary', label: 'Secretary', identifier: 'secretary@tsmhst.co.ke', password: 'Secretary@2026' },
   { role: 'council', label: 'Student Council', identifier: 'council@tsmhst.co.ke', password: 'Council@2026' }
 ];
