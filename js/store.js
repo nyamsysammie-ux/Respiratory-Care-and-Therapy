@@ -61,6 +61,35 @@ function gradeFor(total) {
 
 function clamp(n, min, max) { return Math.max(min, Math.min(max, Number(n) || 0)); }
 
+/* Daily gate check-in/check-out. Windows are local-device times (HH:MM):
+   students check in 06:00–15:45 and check out 15:50–18:00; the secretary
+   controls the windows and can pause either side for the day. */
+const CHECKIN_DEFAULTS = {
+  inStart: '06:00', inEnd: '15:45',
+  outStart: '15:50', outEnd: '18:00',
+  biometricRequired: true,
+  pausedIn: false, pausedOut: false, pausedDate: ''
+};
+const CHECKIN_LATE_AFTER = '08:00';
+const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function localDateKey(d) {
+  const x = d || new Date();
+  return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0');
+}
+function nowHM() {
+  const d = new Date();
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function hmBetween(hm, start, end) { return hm >= start && hm <= end; }
+function hmLabel(hm) {
+  const parts = String(hm || '').split(':');
+  const h = Number(parts[0]); const m = Number(parts[1] || 0);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return '—';
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return hour12 + ':' + String(m).padStart(2, '0') + (h < 12 ? ' am' : ' pm');
+}
+
 /* CAT 1 and CAT 2 are each out of 30 and are averaged into a 30-mark
    coursework score; the main exam is out of 70. Final mark is out of 100. */
 function markTotal(cat1, cat2, exam) {
@@ -243,6 +272,12 @@ const DB = {
     if (!meta.blobsVersion) {
       await this.migrateBlobs();
       meta.blobsVersion = 1;
+      this.save();
+    }
+    if (!meta.checkinVersion) {
+      meta.checkin = Object.assign({}, CHECKIN_DEFAULTS);
+      this.data.checkins = Array.isArray(this.data.checkins) ? this.data.checkins : [];
+      meta.checkinVersion = 1;
       this.save();
     }
     await this.ensureStaffAccounts();
@@ -527,6 +562,7 @@ const DB = {
       },
       users, units: deepCopy(UNITS), registrations, marks, invoices, payments,
       sessions, attendance, assignments, submissions, notices, presence,
+      checkins: [],
       hostelBookings: [
         { id: uid('hb'), studentId: 'u_stu2', hostelId: 'HST', termCode: '2026-T3', status: 'pending', createdAt: isoAt(-2 * DAY) }
       ],
@@ -1072,6 +1108,136 @@ const DB = {
     const held = summary.reduce((a, b) => a + b.held, 0);
     const attended = summary.reduce((a, b) => a + b.attended, 0);
     return { held, attended, percent: held ? Math.round((attended / held) * 100) : 0 };
+  },
+
+  /* ---------------- Daily gate check-in / check-out ---------------- */
+
+  checkinWindows() {
+    if (!this.data.meta.checkin) this.data.meta.checkin = Object.assign({}, CHECKIN_DEFAULTS);
+    return Object.assign({}, CHECKIN_DEFAULTS, this.data.meta.checkin);
+  },
+
+  saveCheckinWindows(patch) {
+    const w = this.checkinWindows();
+    ['inStart', 'inEnd', 'outStart', 'outEnd'].forEach(k => {
+      const value = String((patch || {})[k] || '').trim();
+      if (HM_RE.test(value)) w[k] = value;
+    });
+    this.data.meta.checkin = w;
+    this.save();
+    this.recordAudit('checkin.windows', 'Set check-in window to ' + hmLabel(w.inStart) + '–' + hmLabel(w.inEnd) + ' and check-out to ' + hmLabel(w.outStart) + '–' + hmLabel(w.outEnd) + '.');
+    return w;
+  },
+
+  setCheckinPause(kind, paused) {
+    const w = this.checkinWindows();
+    if (kind === 'in') w.pausedIn = !!paused; else if (kind === 'out') w.pausedOut = !!paused;
+    w.pausedDate = localDateKey();
+    this.data.meta.checkin = w;
+    this.save();
+    this.recordAudit('checkin.pause', (paused ? 'Paused ' : 'Resumed ') + (kind === 'in' ? 'check-ins' : 'check-outs') + ' for today.');
+    return w;
+  },
+
+  setCheckinBiometric(required) {
+    const w = this.checkinWindows();
+    w.biometricRequired = !!required;
+    this.data.meta.checkin = w;
+    this.save();
+    this.recordAudit('checkin.biometric', (required ? 'Biometric check-in required.' : 'Biometric check-in made optional.'));
+    return w;
+  },
+
+  checkinStatus() {
+    const windows = this.checkinWindows();
+    const hm = nowHM();
+    const today = localDateKey();
+    const pausedIn = windows.pausedIn && windows.pausedDate === today;
+    const pausedOut = windows.pausedOut && windows.pausedDate === today;
+    return {
+      date: today, now: hm, windows,
+      inOpen: !pausedIn && hmBetween(hm, windows.inStart, windows.inEnd),
+      outOpen: !pausedOut && hmBetween(hm, windows.outStart, windows.outEnd),
+      pausedIn, pausedOut,
+      before: hm < windows.inStart,
+      after: hm > windows.outEnd
+    };
+  },
+
+  checkinFor(studentId, date) {
+    const key = date || localDateKey();
+    return (this.data.checkins || []).find(c => c.studentId === studentId && c.date === key) || null;
+  },
+
+  checkinsFor(date) {
+    const key = date || localDateKey();
+    return (this.data.checkins || []).filter(c => c.date === key);
+  },
+
+  recordCheckin(studentId, kind, opts) {
+    opts = opts || {};
+    const student = this.user(studentId);
+    if (!student || student.role !== 'student' || student.status !== 'active') return { error: 'student' };
+    const status = this.checkinStatus();
+    if (!opts.override) {
+      if (kind === 'in') {
+        if (status.pausedIn) return { error: 'paused', label: 'check-in' };
+        if (!status.inOpen) return { error: 'closed', window: hmLabel(status.windows.inStart) + ' – ' + hmLabel(status.windows.inEnd), label: 'check-in' };
+      } else {
+        if (status.pausedOut) return { error: 'paused', label: 'check-out' };
+        if (!status.outOpen) return { error: 'closed', window: hmLabel(status.windows.outStart) + ' – ' + hmLabel(status.windows.outEnd), label: 'check-out' };
+      }
+    }
+    const method = opts.method || 'self';
+    if (method === 'biometric' && !opts.biometricVerified) return { error: 'biometric' };
+    let rec = this.checkinFor(studentId, status.date);
+    if (kind === 'in') {
+      if (rec && rec.checkInAt) return { error: 'already', label: 'already checked in' };
+      if (!rec) {
+        rec = { id: uid('chk'), studentId, date: status.date, checkInAt: '', checkOutAt: '', inBy: null, outBy: null, inMethod: '', outMethod: '', late: false };
+        this.data.checkins.push(rec);
+      }
+      rec.checkInAt = isoAt(0);
+      rec.inBy = opts.actorId || studentId;
+      rec.inMethod = method;
+      rec.late = hmBetween(nowHM(), CHECKIN_LATE_AFTER, '23:59');
+    } else {
+      if (rec && rec.checkOutAt) return { error: 'already', label: 'already checked out' };
+      if (!rec || !rec.checkInAt) return { error: 'no-checkin' };
+      rec.checkOutAt = isoAt(0);
+      rec.outBy = opts.actorId || studentId;
+      rec.outMethod = method;
+    }
+    this.save();
+    const who = student.name + ' (' + (student.admissionNo || '') + ')';
+    this.recordAudit('checkin.' + kind, (kind === 'in' ? 'Checked in' : 'Checked out') + ' ' + who + ' — ' + (method === 'biometric' ? 'biometric' : method === 'desk' ? 'secretary desk' : 'self') + '.', this.user(opts.actorId || studentId));
+    return { ok: true, record: rec };
+  },
+
+  deskCheckin(admissionNo, kind, secretaryId) {
+    const key = String(admissionNo || '').trim().toUpperCase();
+    if (!key) return { error: 'student' };
+    const student = this.data.users.find(u => u.role === 'student' && String(u.admissionNo || '').toUpperCase() === key);
+    if (!student) return { error: 'student' };
+    return this.recordCheckin(student.id, kind, { actorId: secretaryId, method: 'desk', override: true, biometricVerified: false });
+  },
+
+  setBiometricCredential(userId, record) {
+    const user = this.user(userId);
+    if (!user) return { error: 'missing' };
+    user.bioCredentialId = record.credentialId;
+    user.bioAlg = record.alg;
+    user.bioPublicKey = record.publicKey || '';
+    user.bioRegisteredAt = record.registeredAt;
+    this.save();
+    return { ok: true };
+  },
+
+  clearBiometricCredential(userId) {
+    const user = this.user(userId);
+    if (!user) return;
+    delete user.bioCredentialId; delete user.bioAlg; delete user.bioPublicKey; delete user.bioRegisteredAt;
+    this.save();
   },
 
   invoicesFor(studentId) { return this.data.invoices.filter(i => i.studentId === studentId); },

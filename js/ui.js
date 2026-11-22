@@ -91,6 +91,13 @@ function fmtDate(value, withTime) {
   return d.toLocaleDateString('en-GB', opts);
 }
 
+function fmtTime(value) {
+  if (!value) return '—';
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return '—';
+  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+}
+
 function fmtShort(value) {
   if (!value) return '—';
   const d = new Date(value);

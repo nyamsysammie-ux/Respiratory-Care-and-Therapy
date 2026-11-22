@@ -9,8 +9,8 @@
    a registrar's upload reaches every student's phone and the size cap
    rises from 20 MB (offline) to 50 MB per file. */
 const Sync = (function () {
-  const TABLES = ['documents', 'payments', 'submissions'];
-  const FILE_FIELD = { documents: 'fileId', payments: 'proofFileId', submissions: 'fileId' };
+  const TABLES = ['documents', 'payments', 'submissions', 'checkins'];
+  const FILE_FIELD = { documents: 'fileId', payments: 'proofFileId', submissions: 'fileId', checkins: null };
   const PULL_KEY = 'tsmhst.cloud.lastPull';
   const UPLOADED_KEY = 'tsmhst.cloud.uploaded';
   const OFFLINE_MAX = 20 * 1024 * 1024;
@@ -58,7 +58,7 @@ const Sync = (function () {
   }
 
   function revOf(rec) {
-    return rec.updatedAt || rec.verifiedAt || rec.gradedAt || rec.createdAt || new Date().toISOString();
+    return rec.updatedAt || rec.verifiedAt || rec.gradedAt || rec.checkOutAt || rec.checkInAt || rec.createdAt || new Date().toISOString();
   }
 
   function markDirty() {

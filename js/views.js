@@ -144,6 +144,7 @@ function navGroups(role) {
     groups.push({
       label: 'Administration', items: [
         { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'checkin', label: 'Check-in desk', icon: 'clock' },
         { route: 'announcements', label: 'Announcements', icon: 'megaphone' },
         { route: 'users', label: 'Users', icon: 'users' },
         { route: 'documents', label: 'Documents', icon: 'file' }
@@ -176,6 +177,7 @@ function routeTitle(route) {
     settings: 'Settings', notifications: 'Notifications', approvals: 'Approvals', users: 'Users',
     academics: 'Academics', marks: 'Marks studio', finance: 'Finance', announcements: 'Announcements',
     campuses: 'Campuses', payments: 'Payments', quality: 'Service quality',
+    checkin: 'Check-in desk',
     timetable: 'Timetable & exams', documents: 'Document vault'
   };
   return titles[route] || 'Portal';
@@ -253,6 +255,7 @@ function bottomNav(role) {
     ],
     secretary: [
       home,
+      { route: 'checkin', label: 'Check-in', icon: 'clock' },
       { route: 'announcements', label: 'Notices', icon: 'megaphone' },
       { route: 'team', label: 'Team', icon: 'users' },
       { route: 'about', label: 'About', icon: 'info' }
@@ -487,6 +490,7 @@ function renderPage(user, route) {
   if (route === 'academics') return renderAcademics(user);
   if (route === 'approvals') return renderApprovals(user);
   if (route === 'users') return renderUsers(user);
+  if (route === 'checkin') return renderCheckin(user);
   if (route === 'finance') return renderFinance(user);
   if (route === 'payments') return renderPayments(user);
   if (route === 'campuses') return renderCampuses(user);
@@ -558,6 +562,8 @@ function renderHome(user) {
   const firstName = user.name.split(' ')[0];
   const term = DB.data.meta.termLabel;
   const deadline = DB.data.meta.registrationDeadline ? fmtDate(DB.data.meta.registrationDeadline) : '';
+  const chk = DB.checkinStatus();
+  const myChk = DB.checkinFor(user.id, chk.date);
 
   const dueList = assignments
     .filter(a => !DB.submissionFor(a.id, user.id))
@@ -578,6 +584,16 @@ function renderHome(user) {
     <div class="hero-metric"><span>${esc(I18N.t('Your attendance'))}</span><strong>${attendance.percent}%</strong>${progress(attendance.percent)}<small>${attendance.attended} of ${attendance.held} sessions</small></div>
   </div>
   ${fees.balance > 0 ? `<div class="alert-strip warn">${icon('alert')}<span>Fee balance: <strong>${money(fees.balance)}</strong>${fees.pending ? ` · ${money(fees.pending)} pending verification` : ''}</span><a href="#/fees">${esc(I18N.t('Pay now'))}</a></div>` : ''}
+  <div class="card">
+    <div class="card-head"><div><h2>Daily check-in</h2><p class="card-sub">Gate attendance · ${chk.windows.biometricRequired ? 'verified with biometrics' : 'biometrics optional'}</p></div>${icon('clock')}</div>
+    ${myChk && myChk.checkInAt && myChk.checkOutAt ? `<div class="inline-success">${icon('checkCircle')} Checked in at ${esc(fmtTime(myChk.checkInAt))} and checked out at ${esc(fmtTime(myChk.checkOutAt))}. See you tomorrow!</div>`
+      : myChk && myChk.checkInAt ? `<div class="alert-strip info">${icon('check')}<span>Checked in at <strong>${esc(fmtTime(myChk.checkInAt))}</strong>${myChk.late ? ' · marked late' : ''}.</span></div>
+        <div class="inline-actions"><button type="button" class="btn btn-primary" data-action="self-checkin" data-kind="out">${icon('logout')} Check out</button><small class="muted-text">Check-out window: ${esc(hmLabel(chk.windows.outStart))} – ${esc(hmLabel(chk.windows.outEnd))}</small></div>`
+      : `<div class="inline-actions"><button type="button" class="btn btn-primary" data-action="self-checkin" data-kind="in">${icon('check')} Check in</button><small class="muted-text">Check-in window: ${esc(hmLabel(chk.windows.inStart))} – ${esc(hmLabel(chk.windows.inEnd))}${chk.pausedIn ? ' · paused today' : ''}</small></div>`}
+    <div class="inline-actions">
+      ${user.bioCredentialId ? `<small class="muted-text">${icon('shield')} Fingerprint registered on this device</small><button type="button" class="btn btn-danger-ghost btn-xs" data-action="bio-remove">Remove</button>` : `<small class="muted-text">${icon('shield')} No fingerprint registered yet</small><button type="button" class="btn btn-ghost btn-xs" data-action="bio-register">Register fingerprint</button>`}
+    </div>
+  </div>
   <div class="stats-grid">
     ${statCard(I18N.t('Your attendance'), attendance.percent + '%', `${attendance.attended}/${attendance.held} sessions`, 'check', 'green')}
     ${statCard(I18N.t('Fee balance'), money(fees.balance), fees.pending ? money(fees.pending) + ' pending' : 'No pending payments', 'wallet', fees.balance > 0 ? 'amber' : '')}

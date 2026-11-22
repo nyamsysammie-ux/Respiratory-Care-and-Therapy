@@ -12,7 +12,7 @@ const ACCESS = {
   exam_officer: ['home', 'marks', 'academics', 'timetable', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
   qa_officer: ['home', 'quality', 'campuses', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
   accounts_clerk: ['home', 'finance', 'documents', 'announcements', 'team', 'about', 'settings', 'notifications'],
-  secretary: ['home', 'announcements', 'users', 'documents', 'team', 'about', 'settings', 'notifications'],
+  secretary: ['home', 'checkin', 'announcements', 'users', 'documents', 'team', 'about', 'settings', 'notifications'],
   council: ['home', 'announcements', 'documents', 'team', 'about', 'settings', 'notifications']
 };
 
@@ -337,6 +337,62 @@ async function handleAction(action, el, event) {
     }
     case 'pay-fees':
       openPayModal();
+      return;
+    case 'self-checkin':
+      if (!user || user.role !== 'student') return;
+      await handleSelfCheckin(user, el.dataset.kind);
+      return;
+    case 'bio-register': {
+      if (!user || user.role !== 'student') return;
+      const reg = await Bio.register(user);
+      if (!reg.ok) { toast(bioErrorText(reg.error), 'error'); return; }
+      DB.setBiometricCredential(user.id, reg.record);
+      toast('Fingerprint/face registered for check-in on this device.', 'success');
+      render();
+      return;
+    }
+    case 'bio-remove':
+      if (!user || user.role !== 'student' || !user.bioCredentialId) return;
+      DB.clearBiometricCredential(user.id);
+      toast('Biometric check-in removed from this device.', 'info');
+      render();
+      return;
+    case 'checkin-desk-in':
+    case 'checkin-desk-out': {
+      if (!user || user.role !== 'secretary') return;
+      const input = document.getElementById('checkin-adm');
+      const kind = el.dataset.kind === 'out' ? 'out' : 'in';
+      const result = DB.deskCheckin(input ? input.value : '', kind, user.id);
+      if (result.error) { toast(checkinErrorText(result), 'error'); return; }
+      const student = DB.user(result.record.studentId);
+      toast((kind === 'in' ? 'Checked in: ' : 'Checked out: ') + (student ? student.name : 'student') + ' at the desk.', 'success');
+      if (input) input.value = '';
+      render();
+      return;
+    }
+    case 'checkin-pause': {
+      if (!user || user.role !== 'secretary') return;
+      const kind = el.dataset.kind === 'out' ? 'out' : 'in';
+      const paused = el.dataset.value === '1';
+      DB.setCheckinPause(kind, paused);
+      toast((paused ? 'Paused ' : 'Resumed ') + (kind === 'in' ? 'check-ins' : 'check-outs') + ' for today.', 'info');
+      render();
+      return;
+    }
+    case 'checkin-biometric': {
+      if (!user || user.role !== 'secretary') return;
+      DB.setCheckinBiometric(el.dataset.value === '1');
+      toast(el.dataset.value === '1' ? 'Biometric check-in is now required.' : 'Biometric check-in is now optional.', 'info');
+      render();
+      return;
+    }
+    case 'checkin-export':
+      if (!user || user.role !== 'secretary') return;
+      exportCheckinCSV(user);
+      return;
+    case 'checkin-refresh':
+      if (!user || user.role !== 'secretary') return;
+      render();
       return;
     case 'hostel-book': {
       if (!user || user.role !== 'student') return;
@@ -947,6 +1003,82 @@ async function publishCurrentUnit() {
   render();
 }
 
+/* ---------------- Daily gate check-in / check-out ---------------- */
+
+function bioErrorText(code) {
+  return {
+    unsupported: 'This browser does not support biometric authentication. Open the portal in Chrome over HTTPS.',
+    'no-sensor': 'This device has no fingerprint or face sensor. Ask the secretary to check you in at the desk.',
+    cancelled: 'Biometric prompt cancelled — nothing was recorded.',
+    'already-registered': 'A biometric credential is already registered on this device.',
+    'not-registered': 'No fingerprint is registered for your account on this device.',
+    failed: 'Biometric verification failed. Try again or see the secretary at the desk.'
+  }[code] || 'Biometric check could not be completed.';
+}
+
+function checkinErrorText(result) {
+  if (result.error === 'student') return 'No active student matches that admission number.';
+  if (result.error === 'paused') return 'The secretary has paused ' + result.label + 's for today.';
+  if (result.error === 'closed') return 'The ' + result.label + ' window is ' + result.window + '. Self-service is only possible inside the window.';
+  if (result.error === 'biometric') return 'Fingerprint or face verification is required to check in.';
+  if (result.error === 'no-checkin') return 'That student has not checked in today, so they cannot check out.';
+  if (result.error === 'already') return 'This student has ' + (result.label || 'already been recorded') + '.';
+  return 'The check-in could not be recorded.';
+}
+
+async function handleSelfCheckin(user, kind) {
+  const status = DB.checkinStatus();
+  const action = kind === 'out' ? 'out' : 'in';
+  const label = action === 'in' ? 'check-in' : 'check-out';
+  if (action === 'in' && status.pausedIn) { toast('The secretary has paused check-ins for today.', 'info'); return; }
+  if (action === 'out' && status.pausedOut) { toast('The secretary has paused check-outs for today.', 'info'); return; }
+  if (action === 'in' && !status.inOpen) { toast('Check-in is only open ' + hmLabel(status.windows.inStart) + ' – ' + hmLabel(status.windows.inEnd) + '.', 'info'); return; }
+  if (action === 'out' && !status.outOpen) { toast('Check-out opens at ' + hmLabel(status.windows.outStart) + '.', 'info'); return; }
+  let verified = false;
+  let method = 'self';
+  const wantsBiometric = status.windows.biometricRequired || !!user.bioCredentialId;
+  if (wantsBiometric) {
+    if (!user.bioCredentialId) {
+      const ok = await confirmDialog({
+        title: 'Register your fingerprint',
+        message: 'Check-in needs your fingerprint or face. Your phone will ask for it once to set it up. No sensor on this phone? Ask the secretary to check you in at the desk instead.',
+        confirmText: 'Set up now'
+      });
+      if (!ok) return;
+      const reg = await Bio.register(user);
+      if (!reg.ok) { toast(bioErrorText(reg.error), 'error'); return; }
+      DB.setBiometricCredential(user.id, reg.record);
+      toast('Fingerprint/face registered. Check-in is now verified with biometrics.', 'success');
+    }
+    const check = await Bio.verify(user);
+    if (!check.ok) { toast(bioErrorText(check.error), 'error'); return; }
+    verified = true;
+    method = 'biometric';
+  }
+  const result = DB.recordCheckin(user.id, action, { actorId: user.id, method, biometricVerified: verified });
+  if (result.error) { toast(checkinErrorText(result), 'error'); return; }
+  toast(action === 'in'
+    ? 'Checked in' + (result.record.late ? ' — marked late.' : '.')
+    : 'Checked out. See you tomorrow!', 'success');
+  render();
+}
+
+function exportCheckinCSV(user) {
+  if (!user || user.role !== 'secretary') return;
+  const status = DB.checkinStatus();
+  const map = {};
+  DB.checkinsFor(status.date).forEach(c => { map[c.studentId] = c; });
+  const roster = DB.usersForCampus(user.campus).filter(u => u.role === 'student' && u.status === 'active')
+    .slice().sort((a, b) => a.name.localeCompare(b.name));
+  downloadCSV('TSMHST-checkin-' + status.date + '.csv',
+    ['Student', 'Admission no.', 'Campus', 'Check-in', 'Check-out', 'Late', 'Check-in method', 'Check-out method'],
+    roster.map(s => {
+      const c = map[s.id] || {};
+      return [s.name, s.admissionNo || '', s.campus || '', c.checkInAt ? fmtDate(c.checkInAt, true) : '', c.checkOutAt ? fmtDate(c.checkOutAt, true) : '', c.late ? 'Yes' : '', c.inMethod || '', c.outMethod || ''];
+    }));
+  toast(roster.length + ' students exported for ' + status.date + '.', 'success');
+}
+
 /* ---------------- Payments & profile modals ---------------- */
 
 function openPayModal() {
@@ -1458,6 +1590,17 @@ async function handleSubmit(form) {
 
   if (kind === 'import-users') {
     await importUsersCSV(form);
+    return;
+  }
+
+  if (kind === 'save-checkin-windows') {
+    if (!user || user.role !== 'secretary') return;
+    DB.saveCheckinWindows({
+      inStart: String(fd.get('inStart') || ''), inEnd: String(fd.get('inEnd') || ''),
+      outStart: String(fd.get('outStart') || ''), outEnd: String(fd.get('outEnd') || '')
+    });
+    toast('Check-in windows updated.', 'success');
+    render();
     return;
   }
 

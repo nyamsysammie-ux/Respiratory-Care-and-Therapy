@@ -435,6 +435,88 @@ function renderUsers(user) {
   <p class="page-note">${icon('shield')} Suspending an account immediately prevents sign-in. You can only manage accounts within your office’s scope; owners and other administrators cannot be suspended from this screen.</p>`;
 }
 
+function renderCheckin(user) {
+  if (!user || user.role !== 'secretary') return renderHome(user);
+  const status = DB.checkinStatus();
+  const roster = DB.usersForCampus(user.campus).filter(u => u.role === 'student' && u.status === 'active')
+    .slice().sort((a, b) => a.name.localeCompare(b.name));
+  const map = {};
+  DB.checkinsFor(status.date).forEach(c => { map[c.studentId] = c; });
+  const stats = { in: 0, out: 0, late: 0, missing: 0 };
+  roster.forEach(s => {
+    const c = map[s.id];
+    if (!c || !c.checkInAt) { stats.missing++; return; }
+    stats.in++;
+    if (c.checkOutAt) stats.out++;
+    if (c.late) stats.late++;
+  });
+  const w = status.windows;
+  const registered = roster.filter(s => s.bioCredentialId).length;
+  return `${pageHead('Check-in desk', `${esc(user.campus)} campus · ${esc(status.date)} · ${esc(status.now)}`,
+    `<button type="button" class="btn btn-ghost btn-sm" data-action="checkin-export">${icon('download')} Export CSV</button><button type="button" class="btn btn-primary btn-sm" data-action="checkin-refresh">${icon('refresh')} Refresh</button>`)}
+  <div class="stats-grid">
+    ${statCard('Checked in', String(stats.in), stats.late + ' late', 'check', 'green')}
+    ${statCard('Checked out', String(stats.out), 'gone home', 'logout', '')}
+    ${statCard('Not yet in', String(stats.missing), roster.length + ' students on roll', 'clock', stats.missing ? 'amber' : '')}
+    ${statCard('Biometric registered', String(registered), 'of ' + roster.length + ' students', 'shield', '')}
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h2>Gate windows</h2><p class="card-sub">You control when self-service is open</p></div>${icon('clock')}</div>
+    <div class="payment-list">
+      <div class="payment-row">
+        <div class="payment-person"><div><strong>Check-in</strong><small>${esc(hmLabel(w.inStart))} – ${esc(hmLabel(w.inEnd))}</small></div></div>
+        <div class="payment-ref"><span>Status</span>${status.pausedIn ? '<span class="badge badge-warn">Paused</span>' : status.inOpen ? '<span class="badge badge-success">Open now</span>' : '<span class="chip chip-soft">Closed</span>'}</div>
+        <div class="inline-actions"><button type="button" class="btn ${status.pausedIn ? 'btn-primary' : 'btn-danger-ghost'} btn-xs" data-action="checkin-pause" data-kind="in" data-value="${status.pausedIn ? '0' : '1'}">${status.pausedIn ? 'Resume' : 'Pause'}</button></div>
+      </div>
+      <div class="payment-row">
+        <div class="payment-person"><div><strong>Check-out</strong><small>${esc(hmLabel(w.outStart))} – ${esc(hmLabel(w.outEnd))}</small></div></div>
+        <div class="payment-ref"><span>Status</span>${status.pausedOut ? '<span class="badge badge-warn">Paused</span>' : status.outOpen ? '<span class="badge badge-success">Open now</span>' : '<span class="chip chip-soft">Closed</span>'}</div>
+        <div class="inline-actions"><button type="button" class="btn ${status.pausedOut ? 'btn-primary' : 'btn-danger-ghost'} btn-xs" data-action="checkin-pause" data-kind="out" data-value="${status.pausedOut ? '0' : '1'}">${status.pausedOut ? 'Resume' : 'Pause'}</button></div>
+      </div>
+      <div class="payment-row">
+        <div class="payment-person"><div><strong>Biometric check-in</strong><small>${registered} student(s) registered · students verify with fingerprint/face</small></div></div>
+        <div class="payment-ref"><span>Mode</span>${w.biometricRequired ? '<span class="badge badge-success">Required</span>' : '<span class="chip chip-soft">Optional</span>'}</div>
+        <div class="inline-actions"><button type="button" class="btn ${w.biometricRequired ? 'btn-danger-ghost' : 'btn-primary'} btn-xs" data-action="checkin-biometric" data-value="${w.biometricRequired ? '0' : '1'}">${w.biometricRequired ? 'Make optional' : 'Require'}</button></div>
+      </div>
+    </div>
+    <form data-form="save-checkin-windows" class="form-grid">
+      <label class="field"><span>Check-in from</span><input type="time" name="inStart" value="${esc(w.inStart)}" required></label>
+      <label class="field"><span>Check-in until</span><input type="time" name="inEnd" value="${esc(w.inEnd)}" required></label>
+      <label class="field"><span>Check-out from</span><input type="time" name="outStart" value="${esc(w.outStart)}" required></label>
+      <label class="field"><span>Check-out until</span><input type="time" name="outEnd" value="${esc(w.outEnd)}" required></label>
+      <div class="form-span"><button type="submit" class="btn btn-ghost btn-sm">${icon('check')} Save windows</button></div>
+    </form>
+    <p class="demo-note">${icon('info')} Desk check-ins below override the windows — students' self-service always follows them.</p>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h2>Record at the desk</h2><p class="card-sub">For students without a working phone or sensor</p></div></div>
+    <div class="inline-actions">
+      <input id="checkin-adm" class="control" type="text" placeholder="Admission no. e.g. TSMHST/CH/2026/001" style="flex:1;min-width:220px" autocomplete="off">
+      <button type="button" class="btn btn-primary" data-action="checkin-desk-in" data-kind="in">${icon('check')} Check in</button>
+      <button type="button" class="btn btn-ghost" data-action="checkin-desk-out" data-kind="out">${icon('logout')} Check out</button>
+    </div>
+  </div>
+  <div class="card table-card">
+    <div class="card-head"><div><h2>Today's roll</h2><p class="card-sub">${roster.length} students · ${esc(DB.data.meta.termLabel)}</p></div><span class="chip chip-soft">${stats.in}/${roster.length} in</span></div>
+    <div class="table-wrap"><table class="data-table">
+      <thead><tr><th>Student</th><th>Check-in</th><th>Check-out</th><th>Method</th><th>Status</th></tr></thead>
+      <tbody>${roster.map(s => {
+        const c = map[s.id];
+        const method = c ? (c.checkOutAt ? (c.outMethod || '') : (c.inMethod || '')) : '';
+        const methodLabel = method === 'biometric' ? 'Biometric' : method === 'desk' ? 'Desk' : method === 'self' ? 'Self' : '—';
+        return `<tr data-search-text="${esc((s.name + ' ' + (s.admissionNo || '')).toLowerCase())}">
+          <td><span class="person-cell">${avatar(s, 'xs')} <strong>${esc(s.name)}</strong></span><br><code class="admission-code">${esc(s.admissionNo || '')}</code></td>
+          <td>${c && c.checkInAt ? esc(fmtTime(c.checkInAt)) + (c.late ? ' <span class="badge badge-warn">Late</span>' : '') : '<span class="muted-text">—</span>'}</td>
+          <td>${c && c.checkOutAt ? esc(fmtTime(c.checkOutAt)) : '<span class="muted-text">—</span>'}</td>
+          <td>${esc(methodLabel)}</td>
+          <td>${c && c.checkOutAt ? '<span class="badge badge-success">Out</span>' : c && c.checkInAt ? '<span class="badge badge-info">In</span>' : '<span class="chip chip-soft">Not in</span>'}</td>
+        </tr>`;
+      }).join('')}</tbody>
+    </table></div>
+  </div>
+  <p class="page-note">${icon('shield')} Students verify with the fingerprint or face registered on their own phone (WebAuthn). Records sync to other devices when cloud sync is connected; otherwise they stay on this device.</p>`;
+}
+
 function renderFinance(user) {
   if (!user || user.role !== 'accounts_clerk') return renderHome(user);
   const finance = DB.financeSummary();
