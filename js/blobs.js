@@ -49,11 +49,22 @@ const Blobs = (function () {
   async function get(id) {
     if (!id) return null;
     try {
-      return await runTx('readonly', (store, out) => {
+      const local = await runTx('readonly', (store, out) => {
         const req = store.get(id);
         req.onsuccess = () => out(req.result || null);
-      }) || null;
-    } catch (e) { return null; }
+      });
+      if (local) return local;
+    } catch (e) { /* fall through to cloud */ }
+    // Missing locally (uploaded on another device) — fetch from Supabase
+    // when cloud sync is configured, then cache it for offline use.
+    if (typeof Sync !== 'undefined' && typeof Sync.fetchFile === 'function') {
+      const remote = await Sync.fetchFile(id);
+      if (remote) {
+        try { await put(id, remote); } catch (e) { /* cache best-effort */ }
+        return remote;
+      }
+    }
+    return null;
   }
 
   async function del(id) {

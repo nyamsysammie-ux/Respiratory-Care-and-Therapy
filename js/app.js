@@ -35,6 +35,7 @@ document.addEventListener('DOMContentLoaded', boot);
 
 async function boot() {
   await DB.init();
+  if (typeof Sync !== 'undefined') Sync.init();
   if (!location.hash) history.replaceState(null, '', '#/home');
   registerServiceWorker();
   setupInstall();
@@ -558,6 +559,21 @@ async function handleAction(action, el, event) {
     case 'document-open':
       openDocumentRecord(el.dataset.document);
       return;
+    case 'open-cloud-sync':
+      openCloudSyncModal();
+      return;
+    case 'cloud-sql':
+      downloadBlob(new Blob([CLOUD_SETUP_SQL], { type: 'text/sql' }), 'tsmhst-supabase-setup.sql');
+      toast('Setup SQL downloaded. Run it in Supabase → SQL Editor.', 'success');
+      return;
+    case 'cloud-sync-now': {
+      if (!user || !isAdminRole(user.role) || typeof Sync === 'undefined') return;
+      const res = await Sync.syncNow();
+      if (res.pushed || res.pulled) toast('Cloud sync complete — ' + res.pushed + ' record(s) pushed, ' + res.pulled + ' pulled.', 'success');
+      else toast('Cloud sync ran. No new changes found.', 'info');
+      render();
+      return;
+    }
     case 'document-download':
       downloadDocumentRecord(el.dataset.document);
       return;
@@ -569,6 +585,7 @@ async function handleAction(action, el, event) {
       if (!ok) return;
       DB.deleteDocument(doc.id);
       if (doc.fileId) await Blobs.del(doc.fileId);
+      if (typeof Sync !== 'undefined' && Sync.tombstone) Sync.tombstone('documents', doc.id);
       closeModal();
       toast('Document removed from the vault.', 'info');
       render();
@@ -781,7 +798,7 @@ function openAssignment(id) {
       </div>` : ''}
       ${graded ? '' : closed ? `<div class="alert-strip warn">${icon('clock')}<span>The deadline has passed. Submissions are closed.</span></div>` : `<form data-form="submit-assignment" data-id="${assignment.id}">
         <label class="field"><span>${esc(I18N.t('Your answer'))}</span><textarea name="text" rows="6" placeholder="Type your answer or paste your submission text here… (optional if you attach a file)">${sub ? esc(sub.text) : ''}</textarea></label>
-        <label class="field"><span>Attach your work (optional — PDF, Word or image, max 10 MB)</span><input type="file" name="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,application/pdf,image/*"></label>
+        <label class="field"><span>Attach your work (optional — PDF, Word or image, max ${Math.round((typeof Sync !== 'undefined' ? Sync.fileCap() : 20 * 1024 * 1024) / (1024 * 1024))} MB)</span><input type="file" name="file" accept=".pdf,.doc,.docx,.png,.jpg,.jpeg,application/pdf,image/*"></label>
         <div class="modal-actions"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} ${esc(sub ? 'Resubmit' : I18N.t('Submit work'))}</button></div>
       </form>`}`;
     modal(assignment.title, body);
@@ -947,7 +964,7 @@ function openPayModal() {
   <form data-form="pay-fees" class="form-grid">
     <label class="field"><span>${esc(I18N.t('Amount'))} (Ksh.)</span><input name="amount" type="number" min="1" step="1" value="${fees.balance || ''}" required></label>
     <label class="field"><span>${esc(I18N.t('M-Pesa code'))} / ${esc(I18N.t('Reference'))}</span><input name="reference" required minlength="4" placeholder="e.g. QK84LM92TX" autocomplete="off"></label>
-    <label class="field form-span"><span>Attach M-Pesa proof (optional — screenshot or PDF of the message, max 10 MB)</span><input type="file" name="proof" accept="image/*,application/pdf,.png,.jpg,.jpeg,.webp,.pdf"></label>
+    <label class="field form-span"><span>Attach M-Pesa proof (optional — screenshot or PDF of the message, max ${Math.round((typeof Sync !== 'undefined' ? Sync.fileCap() : 20 * 1024 * 1024) / (1024 * 1024))} MB)</span><input type="file" name="proof" accept="image/*,application/pdf,.png,.jpg,.jpeg,.webp,.pdf"></label>
     <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} ${esc(I18N.t('Record payment'))}</button></div>
   </form><p class="demo-note">${icon('info')} Attaching a screenshot or PDF of your M-Pesa message lets the campus admin verify against the real evidence instead of the typed code only.</p>`);
 }
@@ -972,6 +989,84 @@ async function openPaymentProof(paymentId) {
     ${statusBadge(payment.status)}
     <div class="modal-actions"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Close'))}</button><a class="btn btn-primary" href="${objectUrl}" download="${esc(payment.proofName || 'payment-proof')}">${icon('download')} Download proof</a></div>`, { size: 'lg' });
   setTimeout(() => URL.revokeObjectURL(objectUrl), 60000);
+}
+
+/* ---------------- Supabase cloud sync (optional) ---------------- */
+
+const CLOUD_SETUP_SQL = `-- TSMHST Portal — Supabase setup (run in SQL Editor)
+-- 1) This table stores the small portal records (documents, payments, submissions).
+create table if not exists cloud_records (
+  table_name text not null,
+  id text not null,
+  payload jsonb not null,
+  updated_at timestamptz not null default now(),
+  deleted boolean not null default false,
+  primary key (table_name, id)
+);
+alter table cloud_records enable row level security;
+create policy "cloud anon read" on cloud_records for select to anon using (true);
+create policy "cloud anon insert" on cloud_records for insert to anon with check (true);
+create policy "cloud anon update" on cloud_records for update to anon using (true) with check (true);
+
+-- 2) Storage bucket for attachments (proofs, documents, submissions).
+insert into storage.buckets (id, name, public) values ('portal-files', 'portal-files', false)
+  on conflict (id) do nothing;
+create policy "portal files anon read" on storage.objects for select to anon
+  using (bucket_id = 'portal-files');
+create policy "portal files anon write" on storage.objects for insert to anon
+  with check (bucket_id = 'portal-files');
+
+-- Notes: the anon key ships inside the app, so anyone holding it can write
+-- these tables; file paths are unguessable ids and listing stays private.
+-- For stricter access later, add Supabase Auth and scope the policies.`;
+
+function openCloudSyncModal() {
+  const user = DB.currentUser();
+  if (!user || !isAdminRole(user.role)) return;
+  if (typeof Sync === 'undefined') { toast('Cloud sync module is not loaded.', 'error'); return; }
+  const cfg = DB.data.meta.cloud || {};
+  const connected = Sync.configured();
+  modal('Cloud sync (Supabase)', `<form data-form="save-cloud" class="form-grid">
+    <p class="modal-lead">Connect a free Supabase project so documents, payment proofs and assignment files reach every device — and the per-file cap rises to 50 MB. Without it, everything stays on this device only.</p>
+    <div class="info-card">${icon(connected ? 'checkCircle' : 'info')}<div><strong>${connected ? 'Connected' : 'Not connected'}</strong><p>${connected ? 'Last sync: ' + esc(Sync.lastSyncedAt() ? fmtDate(Sync.lastSyncedAt(), true) : 'never') + '. Push and pull run automatically in the background.' : 'Run the one-time setup SQL first, then paste the project details below.'}</p></div></div>
+    <label class="field form-span"><span>Project URL</span><input name="url" value="${esc(cfg.url || '')}" placeholder="https://your-project.supabase.co" autocomplete="off"></label>
+    <label class="field form-span"><span>Anon public key</span><input name="key" value="${esc(cfg.key || '')}" placeholder="eyJhbGciOi…" autocomplete="off"></label>
+    <label class="field"><span>Storage bucket</span><input name="bucket" value="${esc(cfg.bucket || 'portal-files')}"></label>
+    <label class="checkline form-span"><input type="checkbox" name="enabled" ${cfg.enabled !== false && (cfg.url || cfg.key) ? 'checked' : ''}> <span>Sync enabled (untick to pause without losing the settings)</span></label>
+    <div class="inline-actions form-span">
+      <button type="button" class="btn btn-ghost btn-sm" data-action="cloud-sql">${icon('download')} Download setup SQL</button>
+      <button type="button" class="btn btn-ghost btn-sm" data-action="cloud-sync-now">${icon('refresh')} Sync now</button>
+    </div>
+    <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} Save cloud settings</button></div>
+  </form>
+  <p class="demo-note">${icon('info')} Steps: create a free project at supabase.com → SQL Editor → run the setup SQL (it creates the cloud_records table and the portal-files bucket) → Settings → API → copy the Project URL and anon public key here. The key ships inside the app, so treat the synced data as portal-internal and rotate the key if it ever leaks.</p>`);
+}
+
+async function saveCloudSettings(form, user) {
+  const fd = new FormData(form);
+  const url = String(fd.get('url') || '').trim().replace(/\/+$/, '');
+  const key = String(fd.get('key') || '').trim();
+  const bucket = String(fd.get('bucket') || 'portal-files').trim() || 'portal-files';
+  const enabled = !!fd.get('enabled');
+  if (url && !/^https:\/\/[a-z0-9-]+\.supabase\.co/i.test(url)) {
+    toast('The project URL looks wrong. It should be https://xxxx.supabase.co.', 'error');
+    return;
+  }
+  if (url && key.length < 30) {
+    toast('Paste the full anon public key from Supabase → Settings → API.', 'error');
+    return;
+  }
+  if (url && key) {
+    toast('Testing the connection…', 'info');
+    const test = await Sync.testConnection(url, key);
+    if (!test.ok) { toast(test.error, 'error'); return; }
+  }
+  DB.data.meta.cloud = url && key ? { url, key, bucket, enabled } : null;
+  DB.save();
+  Sync.reload();
+  toast(url && key ? (enabled ? 'Cloud connected. First sync runs in the background.' : 'Cloud settings saved — sync is paused.') : 'Cloud sync removed. Everything stays on this device.', 'success');
+  closeModal();
+  render();
 }
 
 function openRatingModal() {
@@ -1155,7 +1250,8 @@ async function handleSubmit(form) {
     const fileInput = form.querySelector('input[type="file"]');
     const attachment = fileInput && fileInput.files[0];
     if (attachment) {
-      if (attachment.size > 10 * 1024 * 1024) { toast('Submission files must be 10 MB or smaller.', 'error'); return; }
+      const subCap = typeof Sync !== 'undefined' ? Sync.fileCap() : 20 * 1024 * 1024;
+      if (attachment.size > subCap) { toast('Submission files must be ' + Math.round(subCap / (1024 * 1024)) + ' MB or smaller.', 'error'); return; }
       if (!(/^(image\/|application\/pdf|application\/msword)/.test(attachment.type) || /\.(pdf|docx?|png|jpe?g|webp|txt)$/i.test(attachment.name))) {
         toast('Attach a PDF, Word document or image.', 'error');
         return;
@@ -1239,8 +1335,9 @@ async function handleSubmit(form) {
     let proof = null;
     const proofInput = form.querySelector('input[type="file"]');
     const proofFile = proofInput && proofInput.files[0];
+    const proofCap = typeof Sync !== 'undefined' ? Sync.fileCap() : 20 * 1024 * 1024;
     if (proofFile) {
-      if (proofFile.size > 10 * 1024 * 1024) { toast('Proof files must be 10 MB or smaller.', 'error'); return; }
+      if (proofFile.size > proofCap) { toast('Proof files must be ' + Math.round(proofCap / (1024 * 1024)) + ' MB or smaller.', 'error'); return; }
       if (!(/^(image\/|application\/pdf)/.test(proofFile.type) || /\.(png|jpe?g|webp|pdf)$/i.test(proofFile.name))) {
         toast('Attach a screenshot or PDF of the M-Pesa message.', 'error');
         return;
@@ -1325,7 +1422,9 @@ async function handleSubmit(form) {
     if (!payload.title) { toast('Enter a title for the document.', 'error'); return; }
     const isResultsUpload = payload.slot === 'results';
     if (attachment) {
-      if (attachment.size > 20 * 1024 * 1024) { toast('Attachments must be 20 MB or smaller.', 'error'); return; }
+      const cap = typeof Sync !== 'undefined' ? Sync.fileCap() : 20 * 1024 * 1024;
+      const capLabel = Math.round(cap / (1024 * 1024)) + ' MB';
+      if (attachment.size > cap) { toast('Attachments must be ' + capLabel + ' or smaller.', 'error'); return; }
       payload.filename = attachment.name;
       payload.mime = attachment.type || 'application/octet-stream';
       payload.size = attachment.size;
@@ -1359,6 +1458,12 @@ async function handleSubmit(form) {
 
   if (kind === 'import-users') {
     await importUsersCSV(form);
+    return;
+  }
+
+  if (kind === 'save-cloud') {
+    if (!user || !isAdminRole(user.role)) return;
+    await saveCloudSettings(form, user);
     return;
   }
 
@@ -1469,7 +1574,7 @@ function openDocumentModal(preset) {
     <label class="field form-span"><span>Campus</span><select name="campus">${campuses.map(c => `<option value="${esc(c)}" ${c === campusDefault ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
     <label class="field form-span"><span>Summary</span><input name="summary" maxlength="130" placeholder="One line shown on the document card" value="${esc(preset.summary || '')}"></label>
     <label class="field form-span"><span>Body text (optional when you attach a file)</span><textarea name="body" rows="5" placeholder="Paste the policy or notice text. Blank lines become paragraphs."></textarea></label>
-    <label class="field form-span"><span>${isResults ? 'Attach the signed results sheet (PDF, max 20 MB)' : 'Attach a file (optional, max 20 MB)'}</span><input type="file" name="file" accept="${isResults ? 'application/pdf,.pdf' : '.pdf,.png,.jpg,.jpeg,.txt,.csv,.doc,.docx'}"></label>
+    <label class="field form-span"><span>${isResults ? 'Attach the signed results sheet (PDF, max ' + (typeof Sync !== 'undefined' ? Math.round(Sync.fileCap() / (1024 * 1024)) : 20) + ' MB)' : 'Attach a file (optional, max ' + (typeof Sync !== 'undefined' ? Math.round(Sync.fileCap() / (1024 * 1024)) : 20) + ' MB)'}</span><input type="file" name="file" accept="${isResults ? 'application/pdf,.pdf' : '.pdf,.png,.jpg,.jpeg,.txt,.csv,.doc,.docx'}"></label>
     <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon(isResults ? 'upload' : 'file')} ${isResults ? 'Publish results sheet' : slot ? 'Publish timetable' : 'Add to vault'}</button></div>
   </form><p class="demo-note">${icon('info')} Files are stored in the browser's IndexedDB on this device — up to 20 MB each, hundreds of MB in total — so students can read them offline.</p>`);
 }

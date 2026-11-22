@@ -301,6 +301,7 @@ const DB = {
 
   save() {
     try { localStorage.setItem(DB_KEY, JSON.stringify(this.data)); } catch (e) { /* ignore quota */ }
+    if (typeof Sync !== 'undefined' && typeof Sync.markDirty === 'function') Sync.markDirty();
   },
 
   reload() {

@@ -1132,7 +1132,8 @@ function renderDocuments(user) {
   const selected = categories.indexOf(PORTAL_STATE.documents.category) === -1 ? 'All' : PORTAL_STATE.documents.category;
   const list = selected === 'All' ? docs : docs.filter(d => d.category === selected);
   return `${pageHead('Document vault', 'Official policies, guidelines and files — available even without a network connection',
-    canManage ? `<button type="button" class="btn btn-primary btn-sm" data-action="document-upload">${icon('plus')} Add document</button>` : '')}
+    (isAdminRole(user.role) ? `<button type="button" class="btn btn-ghost btn-sm" data-action="open-cloud-sync">${icon(Sync.configured() ? 'checkCircle' : 'refresh')} Cloud sync</button>` : '') +
+    (canManage ? `<button type="button" class="btn btn-primary btn-sm" data-action="document-upload">${icon('plus')} Add document</button>` : ''))}
   <div class="toolbar">
     <label class="inline-select"><span>Category</span><select class="control" id="doc-category" aria-label="Filter by category">${categories.map(c => `<option value="${esc(c)}" ${c === selected ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
     <span class="chip chip-soft">${list.length} document${list.length === 1 ? '' : 's'}</span>
