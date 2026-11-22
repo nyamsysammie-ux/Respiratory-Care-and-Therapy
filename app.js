@@ -1181,45 +1181,58 @@ function openCloudSyncModal() {
   if (typeof Sync === 'undefined') { toast('Cloud sync module is not loaded.', 'error'); return; }
   const cfg = DB.data.meta.cloud || {};
   const connected = Sync.configured();
-  modal('Cloud sync (Supabase)', `<form data-form="save-cloud" class="form-grid">
-    <p class="modal-lead">Connect a free Supabase project so documents, payment proofs and assignment files reach every device — and the per-file cap rises to 50 MB. Without it, everything stays on this device only.</p>
-    <div class="info-card">${icon(connected ? 'checkCircle' : 'info')}<div><strong>${connected ? 'Connected' : 'Not connected'}</strong><p>${connected ? 'Last sync: ' + esc(Sync.lastSyncedAt() ? fmtDate(Sync.lastSyncedAt(), true) : 'never') + '. Push and pull run automatically in the background.' : 'Run the one-time setup SQL first, then paste the project details below.'}</p></div></div>
-    <label class="field form-span"><span>Project URL</span><input name="url" value="${esc(cfg.url || '')}" placeholder="https://your-project.supabase.co" autocomplete="off"></label>
-    <label class="field form-span"><span>Anon public key</span><input name="key" value="${esc(cfg.key || '')}" placeholder="eyJhbGciOi…" autocomplete="off"></label>
-    <label class="field"><span>Storage bucket</span><input name="bucket" value="${esc(cfg.bucket || 'portal-files')}"></label>
-    <label class="checkline form-span"><input type="checkbox" name="enabled" ${cfg.enabled !== false && (cfg.url || cfg.key) ? 'checked' : ''}> <span>Sync enabled (untick to pause without losing the settings)</span></label>
+  const type = cfg.type === 'server' ? 'server' : 'supabase';
+  modal('Cloud sync', `<form data-form="save-cloud" class="form-grid">
+    <p class="modal-lead">Connect a backend so documents, payment proofs, assignment files and check-ins reach every device — and the per-file cap rises to 50 MB. Choose the college's MongoDB sync server, or a free Supabase project. Without either, everything stays on this device only.</p>
+    <div class="info-card">${icon(connected ? 'checkCircle' : 'info')}<div><strong>${connected ? 'Connected' : 'Not connected'}</strong><p>${connected ? 'Last sync: ' + esc(Sync.lastSyncedAt() ? fmtDate(Sync.lastSyncedAt(), true) : 'never') + '. Push and pull run automatically in the background.' : 'For MongoDB: start the sync server on the ICT machine first. For Supabase: run the one-time setup SQL, then paste the project details.'}</p></div></div>
+    <label class="field form-span"><span>Backend</span><select name="type" id="cloud-type">
+      <option value="server" ${type === 'server' ? 'selected' : ''}>MongoDB sync server (college ICT)</option>
+      <option value="supabase" ${type === 'supabase' ? 'selected' : ''}>Supabase (free cloud project)</option>
+    </select></label>
+    <label class="field form-span"><span id="cloud-url-label">Server URL</span><input name="url" id="cloud-url" value="${esc(cfg.url || '')}" placeholder="http://192.168.1.20:3000" autocomplete="off"></label>
+    <label class="field form-span" id="cloud-key-row"><span>Supabase anon public key</span><input name="key" value="${esc(cfg.key || '')}" placeholder="eyJhbGciOi…" autocomplete="off"></label>
+    <label class="field form-span" id="cloud-bucket-row"><span>Supabase storage bucket</span><input name="bucket" value="${esc(cfg.bucket || 'portal-files')}"></label>
+    <label class="checkline form-span"><input type="checkbox" name="enabled" ${cfg.enabled !== false && cfg.url ? 'checked' : ''}> <span>Sync enabled (untick to pause without losing the settings)</span></label>
     <div class="inline-actions form-span">
       <button type="button" class="btn btn-ghost btn-sm" data-action="cloud-sql">${icon('download')} Download setup SQL</button>
       <button type="button" class="btn btn-ghost btn-sm" data-action="cloud-sync-now">${icon('refresh')} Sync now</button>
     </div>
     <div class="modal-actions form-span"><button type="button" class="btn btn-ghost" data-close>${esc(I18N.t('Cancel'))}</button><button type="submit" class="btn btn-primary">${icon('check')} Save cloud settings</button></div>
   </form>
-  <p class="demo-note">${icon('info')} Steps: create a free project at supabase.com → SQL Editor → run the setup SQL (it creates the cloud_records table and the portal-files bucket) → Settings → API → copy the Project URL and anon public key here. The key ships inside the app, so treat the synced data as portal-internal and rotate the key if it ever leaks.</p>`);
+  <p class="demo-note" id="cloud-note">${icon('info')} MongoDB: on the ICT computer run <code>npm install mongodb</code> then <code>node server.js</code> from the server folder that ships with this release. It listens on port 3000 and stores records and files in the MongoDB database on port 27017. Paste the address here as <code>http://&lt;that-computer's-ip&gt;:3000</code>. The MongoDB collections are created automatically on first connect.</p>`);
 }
 
 async function saveCloudSettings(form, user) {
   const fd = new FormData(form);
+  const type = String(fd.get('type') || 'supabase') === 'server' ? 'server' : 'supabase';
   const url = String(fd.get('url') || '').trim().replace(/\/+$/, '');
   const key = String(fd.get('key') || '').trim();
   const bucket = String(fd.get('bucket') || 'portal-files').trim() || 'portal-files';
   const enabled = !!fd.get('enabled');
-  if (url && !/^https:\/\/[a-z0-9-]+\.supabase\.co/i.test(url)) {
-    toast('The project URL looks wrong. It should be https://xxxx.supabase.co.', 'error');
-    return;
+  if (type === 'server') {
+    if (url && !/^https?:\/\//i.test(url)) {
+      toast('The server address must start with http:// or https:// and include the port, e.g. http://192.168.1.20:3000.', 'error');
+      return;
+    }
+  } else {
+    if (url && !/^https:\/\/[a-z0-9-]+\.supabase\.co/i.test(url)) {
+      toast('The project URL looks wrong. It should be https://xxxx.supabase.co.', 'error');
+      return;
+    }
+    if (url && key.length < 30) {
+      toast('Paste the full anon public key from Supabase → Settings → API.', 'error');
+      return;
+    }
   }
-  if (url && key.length < 30) {
-    toast('Paste the full anon public key from Supabase → Settings → API.', 'error');
-    return;
-  }
-  if (url && key) {
+  if (url && (type === 'supabase' ? key : true)) {
     toast('Testing the connection…', 'info');
-    const test = await Sync.testConnection(url, key);
+    const test = await Sync.testConnection(url, key, type);
     if (!test.ok) { toast(test.error, 'error'); return; }
   }
-  DB.data.meta.cloud = url && key ? { url, key, bucket, enabled } : null;
+  DB.data.meta.cloud = url ? { type, url, ...(type === 'supabase' ? { key, bucket } : {}), enabled } : null;
   DB.save();
   Sync.reload();
-  toast(url && key ? (enabled ? 'Cloud connected. First sync runs in the background.' : 'Cloud settings saved — sync is paused.') : 'Cloud sync removed. Everything stays on this device.', 'success');
+  toast(url ? (enabled ? 'Cloud connected. First sync runs in the background.' : 'Cloud settings saved — sync is paused.') : 'Cloud sync removed. Everything stays on this device.', 'success');
   closeModal();
   render();
 }
