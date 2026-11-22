@@ -1,0 +1,1769 @@
+/* TSMHST Portal — local data store, authentication and academic logic */
+const DB_KEY = 'tsmhst.portal.v1';
+const SESSION_KEY = 'tsmhst.session.v1';
+const SEED_VERSION = 1;
+const CAT_MAX = 30;
+const EXAM_MAX = 70;
+const AUDIT_LIMIT = 400;
+const DOCUMENT_CATEGORIES = ['Policy', 'Examinations', 'Timetable', 'Results', 'Finance', 'Academic', 'Notice', 'Other'];
+const CAT_WEIGHT = 30;
+const EXAM_WEIGHT = 70;
+
+const nowMs = () => Date.now();
+const isoAt = offsetMs => new Date(nowMs() + offsetMs).toISOString();
+const DAY = 86400000;
+const uid = prefix => prefix + '_' + Math.random().toString(36).slice(2, 9) + nowMs().toString(36).slice(-4);
+
+function randomDigits(n) {
+  let out = '';
+  for (let i = 0; i < n; i++) out += Math.floor(Math.random() * 10);
+  return out;
+}
+
+function randomSalt() {
+  if (window.crypto && crypto.getRandomValues) {
+    return Array.from(crypto.getRandomValues(new Uint8Array(12))).map(b => b.toString(16).padStart(2, '0')).join('');
+  }
+  return Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
+}
+
+function fallbackHash(str) {
+  let h1 = 0xdeadbeef, h2 = 0x41c6ce57;
+  for (let i = 0; i < str.length; i++) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 'f' + (h2 >>> 0).toString(16).padStart(8, '0') + (h1 >>> 0).toString(16).padStart(8, '0');
+}
+
+async function hashPassword(password, salt) {
+  const input = salt + ':' + password + ':tsmhst';
+  if (window.crypto && crypto.subtle && window.isSecureContext) {
+    try {
+      const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(input));
+      return Array.from(new Uint8Array(buf)).map(b => b.toString(16).padStart(2, '0')).join('');
+    } catch (e) { /* fall back below */ }
+  }
+  return fallbackHash(input);
+}
+
+function gradeFor(total) {
+  const n = Number(total) || 0;
+  if (n >= 70) return { grade: 'A', points: 4, remark: 'Excellent' };
+  if (n >= 60) return { grade: 'B', points: 3, remark: 'Very good' };
+  if (n >= 50) return { grade: 'C', points: 2, remark: 'Good' };
+  if (n >= 40) return { grade: 'D', points: 1, remark: 'Satisfactory' };
+  return { grade: 'E', points: 0, remark: 'Needs improvement' };
+}
+
+function clamp(n, min, max) { return Math.max(min, Math.min(max, Number(n) || 0)); }
+
+/* Daily gate check-in/check-out. Windows are local-device times (HH:MM):
+   students check in 06:00–15:45 and check out 15:50–18:00; the secretary
+   controls the windows and can pause either side for the day. */
+const CHECKIN_DEFAULTS = {
+  inStart: '06:00', inEnd: '15:45',
+  outStart: '15:50', outEnd: '18:00',
+  biometricRequired: true,
+  pausedIn: false, pausedOut: false, pausedDate: ''
+};
+const CHECKIN_LATE_AFTER = '08:00';
+const HM_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function localDateKey(d) {
+  const x = d || new Date();
+  return x.getFullYear() + '-' + String(x.getMonth() + 1).padStart(2, '0') + '-' + String(x.getDate()).padStart(2, '0');
+}
+function nowHM() {
+  const d = new Date();
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+function hmBetween(hm, start, end) { return hm >= start && hm <= end; }
+function hmLabel(hm) {
+  const parts = String(hm || '').split(':');
+  const h = Number(parts[0]); const m = Number(parts[1] || 0);
+  if (!Number.isFinite(h) || !Number.isFinite(m)) return '—';
+  const hour12 = h % 12 === 0 ? 12 : h % 12;
+  return hour12 + ':' + String(m).padStart(2, '0') + (h < 12 ? ' am' : ' pm');
+}
+
+/* CAT 1 and CAT 2 are each out of 30 and are averaged into a 30-mark
+   coursework score; the main exam is out of 70. Final mark is out of 100. */
+function markTotal(cat1, cat2, exam) {
+  return Math.round(((Number(cat1) || 0) + (Number(cat2) || 0)) / 2 + (Number(exam) || 0));
+}
+function catAverage(cat1, cat2) {
+  return Math.round((((Number(cat1) || 0) + (Number(cat2) || 0)) / 2) * 10) / 10;
+}
+
+function deepCopy(obj) { return JSON.parse(JSON.stringify(obj)); }
+
+function programmeFor(code) { return PORTAL_PROGRAMMES.find(p => p.code === code) || PORTAL_PROGRAMMES[0]; }
+function unitFor(code) { return DB.data.units.find(u => u.code === code) || UNITS.find(u => u.code === code) || null; }
+
+const DEFAULT_SETTINGS = {
+  theme: 'system', font: 'medium', lang: 'en', notifications: false,
+  permissions: { location: false, camera: false, microphone: false },
+  noticesReadAt: 0
+};
+
+/* Standing documents every portal ships with. They are stored as plain
+   text so they work offline and can be exported to PDF on demand. */
+function seedDocuments() {
+  return [
+    {
+      id: 'doc_handbook', title: 'Student handbook & code of conduct', category: 'Policy',
+      summary: 'Attendance, assessment, discipline and campus life rules for all TSMHST students.',
+      audience: 'all', campus: ALL_CAMPUSES, body:
+`1. Attendance
+Students must attend at least 75% of scheduled classes in every unit. Attendance is recorded in the portal during each class session. A student below the 75% threshold may be barred from the end-of-term examination.
+
+2. Assessment
+Each unit is assessed through CAT 1 (30 marks), CAT 2 (30 marks) and a main examination (70 marks). The two CATs are averaged into a 30-mark coursework score. The final mark is out of 100 and is graded A (70+), B (60-69), C (50-59), D (40-49) and E (below 40).
+
+3. Conduct
+Students are expected to treat patients, staff and fellow students with respect. Professional confidentiality applies to every clinical attachment. Mobile phones must be silent during lectures and clinical sessions.
+
+4. Campus life
+Every student is issued with an admission number that must be quoted in all fee payments and official correspondence. Hostel accommodation is booked through the portal and paid separately through the hostel M-Pesa till.
+
+5. Support
+Academic counselling is available through the office of the Registrar. Welfare and student council matters are handled by the Student Council.`,
+      createdBy: 'u_admin2', createdAt: isoAt(-120 * DAY)
+    },
+    {
+      id: 'doc_exam_rules', title: 'Examination regulations — December 2026', category: 'Examinations',
+      summary: 'Reporting times, permitted materials and malpractice rules for the end-of-term examinations.',
+      audience: 'students', campus: ALL_CAMPUSES, body:
+`Reporting time
+Candidates must be seated 15 minutes before each paper. The examination timetable is published on the Timetable & exams page and can be added to a phone calendar.
+
+Permitted materials
+Only a student ID, pen, pencil, ruler and any calculator approved by the unit lecturer may be taken into the hall. Bags and phones must be left at the door.
+
+Malpractice
+Any candidate found with unauthorised material, communicating with another candidate or impersonating a student will have the paper cancelled and the matter referred to the Examinations Board.
+
+Absence
+A candidate who misses a paper through illness must present a medical report to the Examinations Office within 48 hours. Make-up papers are scheduled at the discretion of the Examinations Officer.
+
+Results
+Provisional results are published in the portal. A student may appeal a mark within 14 days of publication through the Registrar.`,
+      createdBy: 'u_exams', createdAt: isoAt(-60 * DAY)
+    },
+    {
+      id: 'doc_fees_policy', title: 'Fee payment and refund policy', category: 'Finance',
+      summary: 'M-Pesa paybill details, verification timelines and the refund process.',
+      audience: 'all', campus: ALL_CAMPUSES, body:
+`Payment channels
+Fees are paid through the official M-Pesa paybill published on the Fees page. The account number is the letter K followed by the student's full name, exactly as it appears on the admission record.
+
+Verification
+After paying, record the M-Pesa code in the portal. The Finance Office verifies each reference within two working days. Only verified payments reduce the fee balance shown on the statement.
+
+Receipts
+Every verified payment has a downloadable PDF receipt on the Fees page. The fee statement lists all invoices and verified payments for the academic year.
+
+Refunds
+Refund applications are made in writing to the Finance Office. Approved refunds are processed within 21 working days to the account or phone number used for payment.
+
+Hostel
+Hostel accommodation is paid separately through the hostel Buy Goods number. Hostel payments are not part of the tuition invoice.`,
+      createdBy: 'u_accounts', createdAt: isoAt(-90 * DAY)
+    },
+    {
+      id: 'doc_attachment', title: 'Clinical attachment guidelines', category: 'Academic',
+      summary: 'Placement requirements, logbook expectations and supervisor sign-off.',
+      audience: 'students', campus: ALL_CAMPUSES, body:
+`Placement
+Clinical attachment is a requirement for all health science programmes. Placements are arranged with the department and approved by the campus principal.
+
+Logbook
+Each student keeps a daily logbook of procedures observed and performed. Entries must be signed by the clinical supervisor at the end of each week.
+
+Assessment
+The attachment is assessed through the logbook (40%), supervisor report (40%) and a short presentation (20%). The mark is recorded alongside unit marks.
+
+Safety
+Students must observe infection prevention measures at all times, including hand hygiene and correct use of protective equipment. Any injury must be reported to the supervisor and the campus office immediately.
+
+Completion
+A signed completion form is submitted to the Registrar before the end-of-term examination.`,
+      createdBy: 'u_principal', createdAt: isoAt(-45 * DAY)
+    }
+  ];
+}
+
+const DB = {
+  data: null,
+
+  async init() {
+    let raw = null;
+    try { raw = localStorage.getItem(DB_KEY); } catch (e) { /* storage unavailable */ }
+    if (raw) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (parsed.schema === SEED_VERSION) { this.data = parsed; await this.migrate(); return; }
+      } catch (e) { /* reseed below */ }
+    }
+    this.data = await this.seed();
+    this.save();
+  },
+
+  async migrate() {
+    const meta = this.data && this.data.meta;
+    if (!meta) return;
+    if (!meta.paybillsVersion || meta.paybillsVersion < 2) {
+      meta.paybills = deepCopy(DEFAULT_PAYBILLS);
+      meta.paybillsVersion = 2;
+      this.save();
+    }
+    if (!meta.hostelsVersion) {
+      (this.data.hostelBookings || []).forEach(b => {
+        if (!HOSTELS.some(h => h.id === b.hostelId)) b.hostelId = HOSTELS[0].id;
+      });
+      meta.hostelsVersion = 1;
+      this.save();
+    }
+    if (!meta.rolesVersion) {
+      this.data.users.forEach(u => {
+        if (u.role === 'admin') u.role = 'general_admin';
+        if (isStaffRole(u.role) && !u.campus) u.campus = u.role === 'general_admin' ? ALL_CAMPUSES : 'Nairobi';
+      });
+      meta.rolesVersion = 1;
+      this.save();
+    }
+    if (!meta.marksVersion) {
+      this.data.marks.forEach(m => {
+        const legacy = (Number(m.cat1) || 0) <= 20 && (Number(m.cat2) || 0) <= 20 && (Number(m.exam) || 0) <= 60;
+        if (legacy) {
+          m.cat1 = Math.round((Number(m.cat1) || 0) / 20 * CAT_MAX);
+          m.cat2 = Math.round((Number(m.cat2) || 0) / 20 * CAT_MAX);
+          m.exam = Math.round((Number(m.exam) || 0) / 60 * EXAM_MAX);
+        }
+        m.total = markTotal(m.cat1, m.cat2, m.exam);
+        const g = gradeFor(m.total);
+        m.grade = g.grade;
+        m.points = g.points;
+      });
+      meta.marksVersion = 1;
+      this.save();
+    }
+    if (!meta.semesterVersion) {
+      this.data.users.forEach(u => {
+        if (u.role !== 'student') return;
+        u.semester = Number(u.semester) || ((Number(u.year) || 1) - 1) * 3 + 1;
+        u.semester = Math.min(9, Math.max(1, u.semester));
+        u.year = Math.ceil(u.semester / 3);
+      });
+      meta.semesterVersion = 1;
+      this.save();
+    }
+    if (!meta.recordsVersion) {
+      this.data.audit = Array.isArray(this.data.audit) ? this.data.audit : [];
+      this.data.documents = Array.isArray(this.data.documents) ? this.data.documents : seedDocuments();
+      meta.recordsVersion = 1;
+      meta.auditVersion = 1;
+      this.save();
+    }
+    if (!meta.blobsVersion) {
+      await this.migrateBlobs();
+      meta.blobsVersion = 1;
+      this.save();
+    }
+    if (!meta.checkinVersion) {
+      meta.checkin = Object.assign({}, CHECKIN_DEFAULTS);
+      this.data.checkins = Array.isArray(this.data.checkins) ? this.data.checkins : [];
+      meta.checkinVersion = 1;
+      this.save();
+    }
+    await this.ensureStaffAccounts();
+  },
+
+  /* Move legacy base64 file contents out of localStorage into IndexedDB.
+     The record keeps only the small descriptor (fileId, name, mime, size). */
+  async migrateBlobs() {
+    if (typeof Blobs === 'undefined' || typeof Blobs.put !== 'function') return;
+    const targets = [];
+    (this.data.documents || []).forEach(d => { if (d.dataUrl && !d.fileId) targets.push(d); });
+    (this.data.submissions || []).forEach(s => { if (s.dataUrl && !s.fileId) targets.push(s); });
+    (this.data.payments || []).forEach(p => { if (p.dataUrl && !p.proofFileId) targets.push(p); });
+    for (const rec of targets) {
+      const blob = Blobs.fromDataURL(rec.dataUrl);
+      if (!blob) continue;
+      const fileId = uid('file');
+      try { await Blobs.put(fileId, blob); } catch (e) { continue; }
+      const isProof = rec.reference !== undefined;
+      if (isProof) {
+        rec.proofFileId = fileId;
+        if (!rec.proofName) rec.proofName = 'payment-proof';
+        if (!rec.proofMime) rec.proofMime = blob.type || 'application/octet-stream';
+        if (!rec.proofSize) rec.proofSize = blob.size;
+      } else {
+        rec.fileId = fileId;
+        if (!rec.mime) rec.mime = blob.type || 'application/octet-stream';
+        if (!rec.size) rec.size = blob.size;
+      }
+      delete rec.dataUrl;
+    }
+  },
+
+  async ensureStaffAccounts() {
+    const passwords = {
+      u_owner: 'Owner@2026', u_director: 'Director@2026', u_deputy: 'Deputy@2026',
+      u_admin: 'Admin@2026', u_admin2: 'Admin@2026', u_principal: 'Principal@2026',
+      u_campus: 'Campus@2026', u_exams: 'Exams@2026', u_qa: 'Quality@2026',
+      u_accounts: 'Accounts@2026', u_secretary: 'Secretary@2026',
+      u_council: 'Council@2026', u_council2: 'Council@2026',
+      u_lec1: 'Lecturer@2026', u_lec2: 'Lecturer@2026', u_lec3: 'Lecturer@2026'
+    };
+    let changed = false;
+    for (const person of STAFF_MEMBERS) {
+      if (this.data.users.some(u => u.id === person.id)) continue;
+      const salt = randomSalt();
+      this.data.users.push(Object.assign({}, person, {
+        status: 'active', createdAt: isoAt(0),
+        password: await hashPassword(passwords[person.id] || 'Admin@2026', salt), salt,
+        settings: deepCopy(DEFAULT_SETTINGS)
+      }));
+      changed = true;
+    }
+    if (changed) this.save();
+  },
+
+  save() {
+    try { localStorage.setItem(DB_KEY, JSON.stringify(this.data)); } catch (e) { /* ignore quota */ }
+    if (typeof Sync !== 'undefined' && typeof Sync.markDirty === 'function') Sync.markDirty();
+  },
+
+  reload() {
+    try {
+      const raw = localStorage.getItem(DB_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        if (parsed.schema === SEED_VERSION) this.data = parsed;
+      }
+    } catch (e) { /* ignore */ }
+  },
+
+  async seed() {
+    const createdAt = isoAt(0);
+    const users = [];
+    const passwordFor = {
+      u_owner: 'Owner@2026', u_director: 'Director@2026', u_deputy: 'Deputy@2026',
+      u_admin: 'Admin@2026', u_admin2: 'Admin@2026', u_principal: 'Principal@2026',
+      u_campus: 'Campus@2026', u_exams: 'Exams@2026', u_qa: 'Quality@2026',
+      u_accounts: 'Accounts@2026', u_secretary: 'Secretary@2026',
+      u_council: 'Council@2026', u_council2: 'Council@2026',
+      u_lec1: 'Lecturer@2026', u_lec2: 'Lecturer@2026', u_lec3: 'Lecturer@2026'
+    };
+    const staff = deepCopy(STAFF_MEMBERS);
+    for (const person of staff) {
+      const salt = randomSalt();
+      users.push(Object.assign({}, person, {
+        id: person.id, status: 'active', createdAt,
+        password: await hashPassword(passwordFor[person.id], salt), salt,
+        settings: deepCopy(DEFAULT_SETTINGS)
+      }));
+    }
+    for (let i = 0; i < STUDENT_NAMES.length; i++) {
+      const [name, admissionNo] = STUDENT_NAMES[i];
+      const salt = randomSalt();
+      const email = name.toLowerCase().replace(/[^a-z ]/g, '').replace(/ +/g, '.') + '@student.tsmhst.co.ke';
+      users.push({
+        id: 'u_stu' + (i + 1), name, role: 'student', title: 'Student, Community Health',
+        email, phone: '+2547' + String(10000000 + i * 111111).slice(0, 8),
+        admissionNo, programme: 'DCH6', semester: 1, year: 1, campus: CAMPUSES[i % CAMPUSES.length],
+        department: 'Department of Health Sciences', status: 'active', createdAt,
+        password: await hashPassword('Student@2026', salt), salt,
+        settings: deepCopy(DEFAULT_SETTINGS)
+      });
+    }
+
+    const currentUnits = UNITS.filter(u => u.current);
+    const students = users.filter(u => u.role === 'student');
+    const registrations = [];
+    students.forEach((s, si) => {
+      currentUnits.filter(u => u.programme === s.programme).forEach(u => {
+        registrations.push({ id: uid('reg'), studentId: s.id, unitCode: u.code, termCode: '2026-T3', createdAt });
+      });
+    });
+
+    const marks = [];
+    const currDch = currentUnits.filter(u => u.programme === 'DCH6');
+    const markTargets = [58, 62, 66, 70, 74, 78, 82, 86, 90, 64, 72, 80];
+    const seedMark = (student, unit, target, published) => {
+      const cat1 = clamp(Math.round(target * 0.3) + 2, 5, CAT_MAX);
+      const cat2 = clamp(Math.round(target * 0.3) - 1, 5, CAT_MAX);
+      const exam = clamp(Math.round(target - (cat1 + cat2) / 2), 0, EXAM_MAX);
+      const total = markTotal(cat1, cat2, exam);
+      const g = gradeFor(total);
+      marks.push({
+        id: uid('mk'), studentId: student.id, unitCode: unit.code, termCode: unit.termCode || '2026-T3',
+        cat1, cat2, exam, total, grade: g.grade, points: g.points,
+        published, updatedAt: createdAt
+      });
+    };
+    students.forEach((s, si) => {
+      currDch.forEach((u, ui) => {
+        seedMark(s, u, markTargets[(si + ui * 3) % markTargets.length] + (ui === 1 ? 2 : 0), u.code !== 'ICT105');
+      });
+      UNITS.filter(u => !u.current && u.programme === 'DCH6').forEach((u, ui) => {
+        seedMark(s, u, 60 + ((si * 5 + ui * 9) % 36), true);
+      });
+    });
+
+    const invoices = students.map(s => {
+      const p = programmeFor(s.programme);
+      const items = [
+        { label: 'Tuition', amount: p.fee.tuition },
+        { label: 'Examination', amount: p.fee.examination },
+        { label: 'Library & resources', amount: p.fee.library },
+        { label: 'Student activity', amount: p.fee.activity }
+      ];
+      return {
+        id: uid('inv'), studentId: s.id, termCode: '2026-T3', termLabel: 'September – December 2026',
+        items, total: items.reduce((a, b) => a + b.amount, 0), createdAt
+      };
+    });
+
+    const payments = [];
+    const demo = users.find(u => u.id === 'u_stu1');
+    payments.push(
+      { id: uid('pay'), studentId: demo.id, amount: 12000, method: 'M-Pesa', reference: 'QK84LM92TX', status: 'verified', createdAt: isoAt(-40 * DAY), verifiedBy: 'u_admin', verifiedAt: isoAt(-39 * DAY) },
+      { id: uid('pay'), studentId: demo.id, amount: 6000, method: 'M-Pesa', reference: 'RK22PN81QD', status: 'verified', createdAt: isoAt(-12 * DAY), verifiedBy: 'u_admin', verifiedAt: isoAt(-11 * DAY) },
+      { id: uid('pay'), studentId: demo.id, amount: 4500, method: 'M-Pesa', reference: 'TJ91QW44MD', status: 'pending', createdAt: isoAt(-1 * DAY) }
+    );
+    const refLetters = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+    students.slice(1).forEach((s, i) => {
+      if (i % 2 === 0) {
+        const amount = 9000 + ((i * 2371) % 12000);
+        payments.push({
+          id: uid('pay'), studentId: s.id, amount, method: 'M-Pesa',
+          reference: refLetters[(i + 3) % refLetters.length] + refLetters[(i + 7) % refLetters.length] + String(10000000 + i * 98765).slice(0, 8),
+          status: i % 5 === 0 ? 'pending' : 'verified',
+          createdAt: isoAt(-(4 + i) * DAY), verifiedBy: i % 5 === 0 ? null : 'u_admin', verifiedAt: i % 5 === 0 ? null : isoAt(-(3 + i) * DAY)
+        });
+      }
+      if (i % 4 === 1) {
+        payments.push({
+          id: uid('pay'), studentId: s.id, amount: 2000 + i * 300, method: 'M-Pesa',
+          reference: 'P' + String(20000000 + i * 12345).slice(0, 8), status: 'pending', createdAt: isoAt(-(2 + i) * DAY)
+        });
+      }
+    });
+
+    const sessions = [];
+    const attendance = [];
+    let sessionCounter = 0;
+    currDch.forEach((u, ui) => {
+      [-21, -14, -7].forEach((offset, si) => {
+        const session = {
+          id: 'ses_' + (++sessionCounter), unitCode: u.code, lecturerId: u.lecturer,
+          code: String(100000 + ((ui * 7919 + si * 3571) % 899999)),
+          openedAt: isoAt(offset * DAY), closesAt: isoAt((offset + 1) * DAY),
+          status: 'closed'
+        };
+        sessions.push(session);
+        students.forEach((s, sti) => {
+          const present = (sti * 7 + si * 5 + ui * 3) % 10 < 8;
+          if (present) attendance.push({ id: uid('att'), sessionId: session.id, studentId: s.id, at: isoAt(offset * DAY + 30 * 60000) });
+        });
+      });
+    });
+
+    const assignments = [
+      {
+        id: 'asg_1', unitCode: 'CHT101', title: 'Community health assessment report',
+        instructions: 'Visit a community near your campus and prepare a 3-page report on the main health challenges, available services and two practical recommendations. Include a simple hand-drawn map of the area.',
+        dueAt: isoAt(5 * DAY), maxScore: 20, createdBy: 'u_lec1', createdAt: isoAt(-9 * DAY)
+      },
+      {
+        id: 'asg_2', unitCode: 'PHN103', title: 'Epidemiology case study',
+        instructions: 'Read the measles outbreak case study shared in class. Calculate the attack rate for each village, identify the likely source and propose three control measures. Submit in PDF or typed text.',
+        dueAt: isoAt(10 * DAY), maxScore: 30, createdBy: 'u_lec1', createdAt: isoAt(-6 * DAY)
+      },
+      {
+        id: 'asg_3', unitCode: 'ANA102', title: 'Anatomy labelling exercise',
+        instructions: 'Label the diagram of the human heart and describe the path of blood through the chambers and valves in not more than 200 words.',
+        dueAt: isoAt(-3 * DAY), maxScore: 20, createdBy: 'u_lec2', createdAt: isoAt(-14 * DAY)
+      },
+      {
+        id: 'asg_4', unitCode: 'COM104', title: 'Professional ethics reflection',
+        instructions: 'Describe a situation in which a health worker might face a confidentiality dilemma. Explain how you would respond and which professional values guide you.',
+        dueAt: isoAt(12 * DAY), maxScore: 15, createdBy: 'u_lec3', createdAt: isoAt(-4 * DAY)
+      },
+      {
+        id: 'asg_5', unitCode: 'ICT105', title: 'Patient records spreadsheet',
+        instructions: 'Create a spreadsheet with 10 fictional patient records, including admission number, age, unit and visit date. Add a formula that counts visits per unit and a simple chart.',
+        dueAt: isoAt(7 * DAY), maxScore: 20, createdBy: 'u_lec1', createdAt: isoAt(-2 * DAY)
+      }
+    ];
+
+    const submissions = [];
+    students.forEach((s, si) => {
+      assignments.forEach((a, ai) => {
+        if (s.id === demo.id) {
+          if (a.id === 'asg_3') {
+            submissions.push({ id: uid('sub'), assignmentId: a.id, studentId: s.id, text: 'I labelled all four chambers, the major vessels and the valves. Blood returns through the vena cavae into the right atrium, passes the tricuspid valve to the right ventricle, is pumped through the pulmonary valve to the lungs, returns through the pulmonary veins to the left atrium, passes the mitral valve to the left ventricle and leaves through the aortic valve to the body.', createdAt: isoAt(-5 * DAY), score: 16, feedback: 'Accurate labels and a clear description. Revise the names of the semilunar valves before the exam.', gradedAt: isoAt(-2 * DAY), gradedBy: 'u_lec2' });
+          }
+          if (a.id === 'asg_2') {
+            submissions.push({ id: uid('sub'), assignmentId: a.id, studentId: s.id, text: 'The attack rates were highest in Village B. Contaminated water is the most likely source. I recommend immediate water treatment, isolation of suspected cases and a community sensitisation campaign.', createdAt: isoAt(-1 * DAY), score: null, feedback: '', gradedAt: null, gradedBy: null });
+          }
+        } else if ((si + ai) % 3 === 0) {
+          submissions.push({
+            id: uid('sub'), assignmentId: a.id, studentId: s.id,
+            text: 'Submission received. Please see the attached notes from the field visit and the calculations for each village.',
+            createdAt: isoAt(-(2 + (si % 3)) * DAY),
+            score: ai === 0 && si % 4 === 0 ? 14 + (si % 5) : null,
+            feedback: ai === 0 && si % 4 === 0 ? 'Good effort. Add more detail on community participation next time.' : '',
+            gradedAt: ai === 0 && si % 4 === 0 ? isoAt(-1 * DAY) : null, gradedBy: ai === 0 && si % 4 === 0 ? 'u_lec1' : null
+          });
+        }
+      });
+    });
+
+    const notices = [
+      { id: 'nt_1', type: 'announcement', title: 'Unit registration for September – December 2026 is open', message: 'All continuing students should register their units in the portal before the deadline. Use the Units page and confirm that your total credits are correct. New students should register after account approval.', audience: 'all', createdBy: 'u_admin', createdAt: isoAt(-2 * DAY), pinned: true },
+      { id: 'nt_2', type: 'announcement', title: 'Student Council town hall — Friday 4:00 PM', message: 'The Student Council invites all students to a town hall at the Nairobi campus main hall. We will discuss the new portal, class representation, hostel matters and the end-of-term study plan. Refreshments will be provided.', audience: 'students', createdBy: 'u_council', createdAt: isoAt(-1 * DAY), pinned: true },
+      { id: 'nt_3', type: 'announcement', title: 'Library extended hours during examinations', message: 'The library will remain open until 9:00 PM on weekdays and 5:00 PM on Saturdays for the next three weeks. Bring your student ID. Quiet study rooms can be booked at the front desk.', audience: 'all', createdBy: 'u_admin', createdAt: isoAt(-4 * DAY), pinned: false },
+      { id: 'nt_4', type: 'system', title: 'Welcome to the TSMHST Portal', message: 'Your portal account is active. You can register units, access assignments, view results, check fees and sign in for classes here. Visit Settings to choose your theme, font size and language.', userId: 'u_stu1', createdBy: 'u_admin', createdAt: isoAt(-10 * DAY) },
+      { id: 'nt_5', type: 'system', title: 'ANA102 assignment graded', message: 'Your Anatomy labelling exercise has been graded. Open Assignments to view the score and feedback.', userId: 'u_stu1', createdBy: 'u_lec2', createdAt: isoAt(-2 * DAY) },
+      { id: 'nt_6', type: 'system', title: 'Fee balance reminder', message: 'Your verified fee balance is Ksh. 4,000. Please clear it before the end of term. A pending payment of Ksh. 4,500 is currently awaiting finance verification.', userId: 'u_stu1', createdBy: 'u_admin', createdAt: isoAt(-12 * 3600000) },
+      { id: 'nt_7', type: 'system', title: 'Payments awaiting verification', message: 'There are pending fee payments for Nairobi campus students. Open Payments to verify the latest transaction references.', audience: 'role', role: 'campus_admin', campus: 'Nairobi', createdBy: 'u_campus', createdAt: isoAt(-3 * 3600000) }
+    ];
+
+    const presence = {};
+    const lastSeenOffsets = [2 * 3600000, 5 * 3600000, 35 * 60000, 4 * 86400000, 26 * 3600000, 2 * 86400000, 6 * 3600000];
+    STAFF_MEMBERS.forEach((m, i) => {
+      presence[m.id] = { online: false, lastSeen: nowMs() - lastSeenOffsets[i % lastSeenOffsets.length] };
+    });
+
+    return {
+      schema: SEED_VERSION,
+      createdAt,
+      meta: {
+        academicYear: '2026/2027',
+        termLabel: 'September – December 2026',
+        termCode: '2026-T3',
+        registrationOpen: true,
+        registrationDeadline: '2026-12-05',
+        paybills: deepCopy(DEFAULT_PAYBILLS),
+        paybillsVersion: 2,
+        rolesVersion: 1,
+        marksVersion: 1,
+        semesterVersion: 1,
+        recordsVersion: 1,
+        auditVersion: 1,
+        nextAdmissionSeq: 13
+      },
+      users, units: deepCopy(UNITS), registrations, marks, invoices, payments,
+      sessions, attendance, assignments, submissions, notices, presence,
+      checkins: [],
+      hostelBookings: [
+        { id: uid('hb'), studentId: 'u_stu2', hostelId: 'HST', termCode: '2026-T3', status: 'pending', createdAt: isoAt(-2 * DAY) }
+      ],
+      documents: seedDocuments(),
+      audit: [
+        { id: uid('au'), at: isoAt(-2 * DAY), action: 'account.approve', detail: 'Nairobi campus administrator approved 4 student registrations.', actorId: 'u_campus', actorName: 'Campus Administrator — Nairobi', role: 'campus_admin', campus: 'Nairobi' },
+        { id: uid('au'), at: isoAt(-1 * DAY), action: 'payment.verify', detail: 'Verified M-Pesa reference QK84LM92TX for Ksh. 12,000.', actorId: 'u_campus', actorName: 'Campus Administrator — Nairobi', role: 'campus_admin', campus: 'Nairobi' },
+        { id: uid('au'), at: isoAt(-6 * 3600000), action: 'results.publish', detail: 'Published results for PHN103 to registered students.', actorId: 'u_lec1', actorName: 'Lecturer', role: 'lecturer', campus: 'Nairobi' }
+      ],
+      feedback: []
+    };
+  },
+
+  session() {
+    try { return JSON.parse(sessionStorage.getItem(SESSION_KEY) || 'null'); } catch (e) { return null; }
+  },
+  currentUser() {
+    const ses = this.session();
+    if (!ses || !ses.userId) return null;
+    return this.data.users.find(u => u.id === ses.userId && u.status === 'active') || null;
+  },
+  isStaff(user) { return !!user && isStaffRole(user.role); },
+
+  touchPresence() {
+    const user = this.currentUser();
+    if (!user) return;
+    this.data.presence[user.id] = { online: true, lastSeen: nowMs() };
+    this.save();
+  },
+
+  async login(identifier, password) {
+    const key = String(identifier || '').trim().toLowerCase();
+    const user = this.data.users.find(u =>
+      (u.email || '').toLowerCase() === key ||
+      (u.admissionNo || '').toLowerCase() === key ||
+      (u.staffNo || '').toLowerCase() === key
+    );
+    if (!user) return { error: 'invalid' };
+    if (user.status === 'pending') return { error: 'pending' };
+    if (user.status === 'rejected' || user.status === 'suspended' || user.status === 'removed') return { error: 'inactive' };
+    const hash = await hashPassword(String(password || ''), user.salt);
+    if (hash !== user.password) return { error: 'invalid' };
+    const ses = { userId: user.id, sid: uid('sid'), at: nowMs() };
+    try { sessionStorage.setItem(SESSION_KEY, JSON.stringify(ses)); } catch (e) { /* ignore */ }
+    this.data.presence[user.id] = { online: true, lastSeen: nowMs() };
+    this.save();
+    return { user };
+  },
+
+  async changePassword(userId, currentPassword, newPassword) {
+    const user = this.data.users.find(u => u.id === userId);
+    if (!user) return { error: 'missing' };
+    const currentHash = await hashPassword(String(currentPassword || ''), user.salt);
+    if (currentHash !== user.password) return { error: 'current' };
+    if (String(newPassword || '').length < 6) return { error: 'weak' };
+    if (String(newPassword) === String(currentPassword || '')) return { error: 'same' };
+    const salt = randomSalt();
+    user.salt = salt;
+    user.password = await hashPassword(newPassword, salt);
+    this.save();
+    return { ok: true };
+  },
+
+  logout() {
+    const user = this.currentUser();
+    if (user) {
+      this.data.presence[user.id] = { online: false, lastSeen: nowMs() };
+      this.save();
+    }
+    try { sessionStorage.removeItem(SESSION_KEY); } catch (e) { /* ignore */ }
+  },
+
+  async register(payload) {
+    const email = String(payload.email || '').trim().toLowerCase();
+    const admissionNo = String(payload.admissionNo || '').trim().toUpperCase();
+    const staffNo = String(payload.staffNo || '').trim().toUpperCase();
+    const allowed = ['student', 'lecturer'].concat(ADMIN_ROLE_OPTIONS.map(o => o.code), EXEC_ROLE_OPTIONS.map(o => o.code));
+    let role = String(payload.role || 'student');
+    if (role === 'admin' || role === 'executive') role = String(payload.adminRole || '');
+    if (allowed.indexOf(role) === -1) return { error: 'role' };
+    if (!email || !payload.name || !payload.password) return { error: 'missing' };
+    if (this.data.users.some(u => (u.email || '').toLowerCase() === email)) return { error: 'email' };
+    if (role === 'student') {
+      if (!admissionNo) return { error: 'admission' };
+      if (this.data.users.some(u => (u.admissionNo || '').toUpperCase() === admissionNo)) return { error: 'admission' };
+    }
+    if (isStaffRole(role)) {
+      if (!staffNo) return { error: 'staff' };
+      if (this.data.users.some(u => (u.staffNo || '').toUpperCase() === staffNo)) return { error: 'staff' };
+    }
+    const salt = randomSalt();
+    const user = {
+      id: uid('usr'), role,
+      name: String(payload.name).trim(), email,
+      phone: String(payload.phone || '').trim(),
+      status: 'pending', createdAt: isoAt(0),
+      password: await hashPassword(payload.password, salt), salt,
+      settings: deepCopy(DEFAULT_SETTINGS)
+    };
+    if (user.role === 'student') {
+      user.admissionNo = admissionNo;
+      user.programme = payload.programme || 'DCH6';
+      user.semester = Math.min(9, Math.max(1, Number(payload.semester) || 1));
+      user.year = Math.ceil(user.semester / 3);
+      user.campus = payload.campus || 'Nairobi';
+      user.department = programmeFor(user.programme).dept;
+      user.title = 'Student, ' + programmeFor(user.programme).short;
+    } else if (user.role === 'lecturer') {
+      user.staffNo = staffNo;
+      user.campus = payload.campus || 'Nairobi';
+      user.department = payload.department || 'Department of Health Sciences';
+      user.title = 'Lecturer, ' + user.department.replace('Department of ', '') + ' — ' + user.campus;
+    } else {
+      user.staffNo = staffNo;
+      user.campus = isExecRole(user.role) ? ALL_CAMPUSES : (payload.campus || 'Nairobi');
+      user.department = roleOffice(user.role);
+      user.title = ROLE_LABELS[user.role] + (isExecRole(user.role) ? ' — all campuses' : ' — ' + user.campus);
+    }
+    this.data.users.push(user);
+    this.save();
+    this.notifyApprovers(user);
+    return { user };
+  },
+
+  approveUser(id, adminId) {
+    const user = this.data.users.find(u => u.id === id);
+    if (!user) return { error: 'missing' };
+    const approver = this.data.users.find(u => u.id === adminId);
+    if (approver && !this.canApprove(approver, user)) return { error: 'forbidden' };
+    user.status = 'active';
+    user.approvedAt = isoAt(0);
+    user.approvedBy = adminId || null;
+    if (user.role === 'student') this.ensureInvoice(user);
+    const roleText = ROLE_LABELS[user.role] || 'member';
+    this.addNotice({
+      title: 'Your portal account is approved', type: 'system',
+      message: 'Welcome to the TSMHST Portal. Your ' + roleText + ' account is active. ' +
+        (user.role === 'student' ? 'You can now register units, view assignments and access your fees. ' : 'You can now open your workspace. ') +
+        'Visit Settings to personalise the app.',
+      userId: user.id, createdBy: adminId || 'u_owner'
+    });
+    this.save();
+    this.recordAudit('account.approve', 'Approved ' + user.name + ' as ' + (ROLE_LABELS[user.role] || user.role) + (user.campus && user.campus !== ALL_CAMPUSES ? ' — ' + user.campus : '') + '.', approver);
+    return { ok: true };
+  },
+
+  rejectUser(id, adminId) {
+    const user = this.data.users.find(u => u.id === id);
+    if (!user) return;
+    user.status = 'rejected';
+    user.rejectedAt = isoAt(0);
+    user.rejectedBy = adminId || null;
+    this.save();
+    this.recordAudit('account.reject', 'Rejected the registration of ' + user.name + '.', this.user(adminId));
+  },
+
+  /* Bulk account creation for the Users desk CSV import. Rows are parsed
+     by the caller; each one becomes an active account with the shared
+     starter password TSMHST@2026. */
+  async importUsers(entries, importerId) {
+    const importer = this.user(importerId) || {};
+    const created = [];
+    const skipped = [];
+    const allowed = ['student', 'lecturer'].concat(ADMIN_ROLE_OPTIONS.map(o => o.code), EXEC_ROLE_OPTIONS.map(o => o.code));
+    for (const entry of entries) {
+      const name = String(entry.name || '').trim();
+      const email = String(entry.email || '').trim().toLowerCase();
+      const role = String(entry.role || '').trim();
+      if (!name || !email) { skipped.push({ name: name || '(no name)', reason: 'missing name or email' }); return; }
+      if (allowed.indexOf(role) === -1) { skipped.push({ name, reason: 'unknown role "' + role + '"' }); return; }
+      if (this.data.users.some(u => (u.email || '').toLowerCase() === email)) { skipped.push({ name, reason: 'email already registered' }); return; }
+      const admissionNo = String(entry.admissionNo || '').trim().toUpperCase();
+      const staffNo = String(entry.staffNo || '').trim().toUpperCase();
+      const campus = String(entry.campus || '').trim() || importer.campus || 'Nairobi';
+      const user = {
+        id: uid('usr'), role, name, email,
+        phone: String(entry.phone || '').trim(),
+        status: entry.status === 'pending' ? 'pending' : 'active',
+        createdAt: isoAt(0),
+        password: null, salt: null,
+        settings: deepCopy(DEFAULT_SETTINGS)
+      };
+      if (user.role === 'student') {
+        if (!admissionNo) { skipped.push({ name, reason: 'missing admission number' }); return; }
+        if (this.data.users.some(u => (u.admissionNo || '').toUpperCase() === admissionNo)) { skipped.push({ name, reason: 'admission number already registered' }); return; }
+        const programme = PORTAL_PROGRAMMES.some(p => p.code === String(entry.programme || '').trim()) ? String(entry.programme).trim() : 'DCH6';
+        const semester = Math.min(9, Math.max(1, Number(entry.semester) || 1));
+        Object.assign(user, {
+          admissionNo, programme, semester,
+          year: Math.ceil(semester / 3), campus,
+          department: programmeFor(programme).dept,
+          title: 'Student, ' + programmeFor(programme).short
+        });
+      } else {
+        if (!staffNo) { skipped.push({ name, reason: 'missing staff number' }); return; }
+        if (this.data.users.some(u => (u.staffNo || '').toUpperCase() === staffNo)) { skipped.push({ name, reason: 'staff number already registered' }); return; }
+        if (isExecRole(user.role)) user.campus = ALL_CAMPUSES; else user.campus = campus;
+        user.staffNo = staffNo;
+        user.department = isStaffRole(user.role) && user.role !== 'lecturer' ? roleOffice(user.role) : (entry.department || 'Department of Health Sciences');
+        user.title = (ROLE_LABELS[user.role] || 'Staff') + (isExecRole(user.role) ? ' — all campuses' : ' — ' + user.campus);
+      }
+      const salt = randomSalt();
+      user.salt = salt;
+      user.password = await hashPassword('TSMHST@2026', salt);
+      user.importedBy = importerId || null;
+      user.importedAt = isoAt(0);
+      this.data.users.push(user);
+      if (user.role === 'student' && user.status === 'active') this.ensureInvoice(user);
+      created.push(user);
+    }
+    if (created.length) {
+      this.save();
+      this.recordAudit('account.import', 'Imported ' + created.length + ' account' + (created.length === 1 ? '' : 's') + ' from CSV' + (skipped.length ? ' (' + skipped.length + ' row(s) skipped)' : '') + '.', importer);
+    }
+    return { created, skipped };
+  },
+
+  setUserStatus(id, status) {
+    const user = this.data.users.find(u => u.id === id);
+    if (!user) return;
+    user.status = status;
+    this.save();
+    this.recordAudit('account.' + (status === 'suspended' ? 'suspend' : 'activate'), (status === 'suspended' ? 'Suspended ' : 'Activated ') + user.name + "'s account.");
+  },
+
+  /* Removal from the portal: campus admin -> students, principal -> lecturers,
+     director -> administrators. Soft removal: sign-in is blocked and the
+     account is hidden, but marks, payments and audit history are kept. */
+  canRemove(actor, target) {
+    if (!actor || !target || actor.id === target.id || target.status === 'removed') return false;
+    const a = actor.role, t = target.role;
+    let allowed = false;
+    if (a === 'campus_admin') allowed = t === 'student';
+    else if (a === 'principal') allowed = t === 'lecturer';
+    else if (a === 'director') allowed = ADMIN_ROLES.indexOf(t) !== -1 && t !== 'owner' && t !== 'director';
+    return allowed && this.inScope(actor, target);
+  },
+  removeUser(id, actorId, reason) {
+    const user = this.data.users.find(u => u.id === id);
+    const actor = this.user(actorId);
+    if (!user || !actor) return { error: 'missing' };
+    if (!this.canRemove(actor, user)) return { error: 'forbidden' };
+    user.status = 'removed';
+    user.removedAt = isoAt(0);
+    user.removedBy = actorId;
+    user.removedReason = String(reason || '').trim().slice(0, 200);
+    if (this.data.presence && this.data.presence[id]) this.data.presence[id].online = false;
+    this.save();
+    this.recordAudit('account.remove', 'Removed ' + user.name + ' (' + (ROLE_LABELS[user.role] || user.role) + ') from the portal' + (user.removedReason ? ' — ' + user.removedReason : '') + '.', actor);
+    return { ok: true };
+  },
+
+  canApprove(approver, target) {
+    if (!approver || !target) return false;
+    const a = approver.role;
+    const t = target.role;
+    if (a === 'owner') return t === 'principal' || t === 'director';
+    if (a === 'director') {
+      if (t === 'principal' || t === 'director' || t === 'owner') return false;
+      return isStaffRole(t);
+    }
+    if (a === 'principal') {
+      return ['lecturer', 'campus_admin', 'registrar', 'exam_officer', 'qa_officer', 'accounts_clerk', 'secretary'].indexOf(t) !== -1;
+    }
+    if (a === 'campus_admin') return t === 'student';
+    return false;
+  },
+  inScope(approver, target) {
+    if (!approver || !target) return false;
+    if (isExecRole(approver.role) || approver.role === 'owner' || approver.role === 'director') return true;
+    return (approver.campus || '') === (target.campus || '') || (approver.campus || '') === ALL_CAMPUSES;
+  },
+  pendingUsersFor(user) {
+    if (!user) return [];
+    return this.data.users.filter(u => u.status === 'pending' && this.canApprove(user, u) && this.inScope(user, u));
+  },
+  notifyApprovers(user) {
+    const role = APPROVER_BY_ROLE[user.role];
+    if (!role) return;
+    const scope = isExecRole(role) ? ALL_CAMPUSES : user.campus;
+    this.addNotice({
+      title: 'Registration awaiting approval', type: 'system',
+      message: user.name + ' registered as ' + (ROLE_LABELS[user.role] || 'member') + (scope ? ' for ' + scope : '') + '. Review the request in Approvals.',
+      audience: 'role', role, campus: scope, createdBy: user.id
+    });
+  },
+  approverRoleFor(role) { return APPROVER_BY_ROLE[role] || null; },
+
+  ensureInvoice(user) {
+    if (!user || user.role !== 'student') return;
+    const exists = this.data.invoices.some(i => i.studentId === user.id && i.termCode === this.data.meta.termCode);
+    if (exists) return;
+    const p = programmeFor(user.programme);
+    const items = [
+      { label: 'Tuition', amount: p.fee.tuition },
+      { label: 'Examination', amount: p.fee.examination },
+      { label: 'Library & resources', amount: p.fee.library },
+      { label: 'Student activity', amount: p.fee.activity }
+    ];
+    this.data.invoices.push({
+      id: uid('inv'), studentId: user.id, termCode: this.data.meta.termCode,
+      termLabel: this.data.meta.termLabel,
+      items, total: items.reduce((a, b) => a + b.amount, 0), createdAt: isoAt(0)
+    });
+    this.save();
+  },
+
+  /* Finance office / campus admin sets the fee per semester for one
+     student: replaces the invoice items and recalculates the balance. */
+  saveInvoiceItems(studentId, termCode, items, actorId) {
+    const student = this.user(studentId);
+    if (!student || student.role !== 'student') return { error: 'student' };
+    let invoice = this.invoiceFor(studentId, termCode);
+    if (!invoice) {
+      this.ensureInvoice(student);
+      invoice = this.invoiceFor(studentId, termCode);
+    }
+    if (!invoice) return { error: 'invoice' };
+    const clean = (Array.isArray(items) ? items : [])
+      .map(i => ({ label: String(i.label || '').trim(), amount: Math.round(Number(i.amount) || 0) }))
+      .filter(i => i.label && i.amount > 0);
+    if (!clean.length) return { error: 'items' };
+    invoice.items = clean;
+    invoice.total = clean.reduce((a, b) => a + b.amount, 0) + (Number(invoice.adjustment) || 0);
+    invoice.updatedAt = isoAt(0);
+    invoice.updatedBy = actorId || null;
+    this.save();
+    const fees = this.feeSummary(studentId);
+    this.addNotice({
+      title: 'Fee invoice updated', type: 'system',
+      message: 'Your fee invoice for ' + invoice.termLabel + ' was updated. Fee per semester: Ksh. ' +
+        invoice.total.toLocaleString('en-KE') + '. Current balance: Ksh. ' + fees.balance.toLocaleString('en-KE') + '.',
+      userId: studentId, createdBy: actorId || 'u_accounts'
+    });
+    this.recordAudit('fees.invoice', 'Set the fee invoice of ' + student.name + ' (' + (student.admissionNo || '') + ') to Ksh. ' +
+      invoice.total.toLocaleString('en-KE') + ' for ' + invoice.termLabel + '.', this.user(actorId));
+    return { ok: true, invoice };
+  },
+
+  /* Campus admin sets the fee balance of one student directly. The invoice
+     gets an adjustment so that  fee billed - verified paid = balance. */
+  setStudentBalance(studentId, balance, actorId, note) {
+    const actor = this.user(actorId);
+    const student = this.user(studentId);
+    if (!actor || actor.role !== 'campus_admin') return { error: 'forbidden' };
+    if (!student || student.role !== 'student') return { error: 'student' };
+    if (actor.campus !== student.campus) return { error: 'campus' };
+    const target = Math.round(Number(balance));
+    if (!isFinite(target) || target < 0 || target > 100000000) return { error: 'amount' };
+    this.ensureInvoice(student);
+    const invoice = this.invoiceFor(studentId, this.data.meta.termCode);
+    if (!invoice) return { error: 'invoice' };
+    const before = this.feeSummary(studentId);
+    const itemsSum = invoice.items.reduce((a, b) => a + b.amount, 0);
+    const paid = before.paid;
+    invoice.adjustment = paid + target - itemsSum;
+    invoice.total = itemsSum + invoice.adjustment;
+    invoice.adjustmentNote = String(note || '').trim().slice(0, 200);
+    invoice.updatedAt = isoAt(0);
+    invoice.updatedBy = actorId;
+    this.save();
+    this.addNotice({
+      title: 'Fee balance updated', type: 'system',
+      message: 'Your fee balance was set to Ksh. ' + target.toLocaleString('en-KE') + ' by the campus administration.' + (invoice.adjustmentNote ? ' Note: ' + invoice.adjustmentNote : ''),
+      userId: studentId, createdBy: actorId
+    });
+    this.recordAudit('fees.balance', 'Set the fee balance of ' + student.name + ' (' + (student.admissionNo || '') + ') from Ksh. ' +
+      before.balance.toLocaleString('en-KE') + ' to Ksh. ' + target.toLocaleString('en-KE') + '.', actor);
+    return { ok: true, balance: target, previous: before.balance };
+  },
+
+  settings(user) {
+    const u = user || this.currentUser();
+    if (!u) return deepCopy(DEFAULT_SETTINGS);
+    u.settings = Object.assign({}, DEFAULT_SETTINGS, u.settings || {});
+    u.settings.permissions = Object.assign({}, DEFAULT_SETTINGS.permissions, (u.settings || {}).permissions || {});
+    return u.settings;
+  },
+  saveSettings(patch) {
+    const user = this.currentUser();
+    if (!user) return;
+    const current = this.settings(user);
+    Object.assign(current, patch);
+    user.settings = current;
+    this.save();
+  },
+
+  unitsForProgramme(programme, currentOnly) {
+    return this.data.units.filter(u => u.programme === programme && (currentOnly === false || u.current));
+  },
+  unit(code) { return this.data.units.find(u => u.code === code) || null; },
+  user(id) { return this.data.users.find(u => u.id === id) || null; },
+  programme(code) { return programmeFor(code); },
+
+  registrationsFor(userId, termCode) {
+    return this.data.registrations.filter(r => r.studentId === userId && (!termCode || r.termCode === termCode));
+  },
+  isRegistered(studentId, unitCode) {
+    return this.data.registrations.some(r => r.studentId === studentId && r.unitCode === unitCode && r.termCode === this.data.meta.termCode);
+  },
+  registerUnit(studentId, unitCode) {
+    if (!this.data.meta.registrationOpen) return { error: 'closed' };
+    if (this.isRegistered(studentId, unitCode)) return { error: 'duplicate' };
+    const unit = this.unit(unitCode);
+    if (!unit || !unit.current) return { error: 'unit' };
+    this.data.registrations.push({ id: uid('reg'), studentId, unitCode, termCode: this.data.meta.termCode, createdAt: isoAt(0) });
+    this.save();
+    return { ok: true };
+  },
+  dropUnit(studentId, unitCode) {
+    if (!this.data.meta.registrationOpen) return { error: 'closed' };
+    this.data.registrations = this.data.registrations.filter(r => !(r.studentId === studentId && r.unitCode === unitCode && r.termCode === this.data.meta.termCode));
+    this.save();
+    return { ok: true };
+  },
+  studentsForUnit(unitCode, termCode) {
+    const term = termCode || this.data.meta.termCode;
+    const ids = this.data.registrations.filter(r => r.unitCode === unitCode && r.termCode === term).map(r => r.studentId);
+    return this.data.users.filter(u => ids.includes(u.id) && u.role === 'student' && u.status === 'active');
+  },
+  unitsForLecturer(userId) {
+    return this.data.units.filter(u => u.current && u.lecturer === userId);
+  },
+
+  marksForUnit(unitCode, termCode) {
+    return this.data.marks.filter(m => m.unitCode === unitCode && (!termCode || m.termCode === termCode));
+  },
+  marksForStudent(studentId, publishedOnly) {
+    return this.data.marks.filter(m => m.studentId === studentId && (!publishedOnly || m.published));
+  },
+  gpa(marks) {
+    const valid = marks.filter(m => m.points !== undefined && m.published !== false);
+    if (!valid.length) return null;
+    const credits = valid.reduce((sum, m) => { const u = this.unit(m.unitCode); return sum + (u ? u.credits : 0); }, 0);
+    if (!credits) return valid.reduce((a, m) => a + m.points, 0) / valid.length;
+    const weighted = valid.reduce((sum, m) => { const u = this.unit(m.unitCode); return sum + m.points * (u ? u.credits : 0); }, 0);
+    return weighted / credits;
+  },
+  classification(gpa) {
+    if (gpa === null) return '—';
+    if (gpa >= 3.6) return 'First Class Honours';
+    if (gpa >= 3.0) return 'Second Class Honours (Upper Division)';
+    if (gpa >= 2.5) return 'Second Class Honours (Lower Division)';
+    if (gpa >= 2.0) return 'Pass';
+    return 'Fail';
+  },
+
+  saveMarks(unitCode, entries, termCode) {
+    const term = termCode || this.data.meta.termCode;
+    const now = isoAt(0);
+    entries.forEach(entry => {
+      const cat1 = clamp(entry.cat1, 0, CAT_MAX);
+      const cat2 = clamp(entry.cat2, 0, CAT_MAX);
+      const exam = clamp(entry.exam, 0, EXAM_MAX);
+      const total = markTotal(cat1, cat2, exam);
+      const g = gradeFor(total);
+      let mark = this.data.marks.find(m => m.studentId === entry.studentId && m.unitCode === unitCode && m.termCode === term);
+      if (!mark) {
+        mark = { id: uid('mk'), studentId: entry.studentId, unitCode, termCode: term, published: false };
+        this.data.marks.push(mark);
+      }
+      Object.assign(mark, { cat1, cat2, exam, total, grade: g.grade, points: g.points, updatedAt: now });
+    });
+    this.save();
+    this.recordAudit('marks.save', 'Saved marks for ' + entries.length + ' student' + (entries.length === 1 ? '' : 's') + ' in ' + unitCode + ' (' + term + ').');
+  },
+
+  randomizeMarks(unitCode, termCode) {
+    const term = termCode || this.data.meta.termCode;
+    const students = this.studentsForUnit(unitCode, term);
+    const now = isoAt(0);
+    students.forEach(student => {
+      const target = 40 + Math.floor(Math.random() * 55);
+      const cat1 = clamp(Math.round(target * 0.3 + (Math.random() * 4 - 2)), 4, CAT_MAX);
+      const cat2 = clamp(Math.round(target * 0.3 + (Math.random() * 4 - 2)), 4, CAT_MAX);
+      const exam = clamp(Math.round(target - (cat1 + cat2) / 2), 10, EXAM_MAX);
+      const finalTotal = markTotal(cat1, cat2, exam);
+      const g = gradeFor(finalTotal);
+      let mark = this.data.marks.find(m => m.studentId === student.id && m.unitCode === unitCode && m.termCode === term);
+      if (!mark) {
+        mark = { id: uid('mk'), studentId: student.id, unitCode, termCode: term, published: false };
+        this.data.marks.push(mark);
+      }
+      Object.assign(mark, { cat1, cat2, exam, total: finalTotal, grade: g.grade, points: g.points, updatedAt: now });
+    });
+    this.save();
+    return students.length;
+  },
+
+  randomizeProgramme(programme, termCode) {
+    const units = this.data.units.filter(u => u.current && u.programme === programme);
+    let count = 0;
+    units.forEach(u => { count += this.randomizeMarks(u.code, termCode); });
+    return count;
+  },
+
+  setPublished(unitCode, published, publisherId) {
+    const term = this.data.meta.termCode;
+    const marks = this.marksForUnit(unitCode, term);
+    marks.forEach(m => { m.published = !!published; });
+    if (published) {
+      const unit = this.unit(unitCode);
+      this.studentsForUnit(unitCode, term).forEach(student => {
+        this.addNotice({
+          title: 'Results published — ' + unitCode, type: 'system',
+          message: 'Results for ' + unit.title + ' have been published. Open Results to view your marks.',
+          userId: student.id, createdBy: publisherId || 'u_admin'
+        });
+      });
+    }
+    this.save();
+    this.recordAudit(published ? 'results.publish' : 'results.unpublish', (published ? 'Published' : 'Unpublished') + ' ' + unitCode + ' results for ' + marks.length + ' student' + (marks.length === 1 ? '' : 's') + '.', this.user(publisherId));
+  },
+
+  assignmentsForStudent(userId) {
+    const unitCodes = this.registrationsFor(userId, this.data.meta.termCode).map(r => r.unitCode);
+    return this.data.assignments.filter(a => unitCodes.includes(a.unitCode));
+  },
+  assignmentsForStaff(user) {
+    if (isAdminRole(user.role)) return this.data.assignments.slice();
+    const unitCodes = this.unitsForLecturer(user.id).map(u => u.code);
+    return this.data.assignments.filter(a => unitCodes.includes(a.unitCode));
+  },
+  submissionFor(assignmentId, studentId) {
+    return this.data.submissions.find(s => s.assignmentId === assignmentId && s.studentId === studentId) || null;
+  },
+  submissionsFor(assignmentId) {
+    return this.data.submissions.filter(s => s.assignmentId === assignmentId);
+  },
+  submitAssignment(assignmentId, studentId, text, file) {
+    const assignment = this.data.assignments.find(a => a.id === assignmentId);
+    if (!assignment) return { error: 'missing' };
+    if (new Date(assignment.dueAt).getTime() < nowMs()) return { error: 'closed' };
+    let sub = this.submissionFor(assignmentId, studentId);
+    if (sub && sub.gradedAt) return { error: 'graded' };
+    file = file && file.fileId ? file : null;
+    if (!String(text || '').trim() && !file) return { error: 'empty' };
+    if (!sub) {
+      sub = { id: uid('sub'), assignmentId, studentId, text: '', createdAt: isoAt(0), score: null, feedback: '', gradedAt: null, gradedBy: null };
+      this.data.submissions.push(sub);
+    }
+    sub.text = String(text || '').trim();
+    sub.createdAt = isoAt(0);
+    if (file) {
+      sub.fileId = file.fileId;
+      sub.filename = String(file.name || 'submission');
+      sub.mime = String(file.mime || 'application/octet-stream');
+      sub.size = Number(file.size) || 0;
+    }
+    this.save();
+    if (file) {
+      this.recordAudit('assignment.submit', 'Received "' + (sub.filename || 'a file') + '" for "' + assignment.title + '" from ' + (this.user(studentId) || {}).name + '.');
+    }
+    return { ok: true, submission: sub };
+  },
+  createAssignment(payload, userId) {
+    const assignment = {
+      id: uid('asg'), unitCode: payload.unitCode, title: payload.title,
+      instructions: payload.instructions, dueAt: payload.dueAt, maxScore: Number(payload.maxScore) || 20,
+      createdBy: userId, createdAt: isoAt(0)
+    };
+    this.data.assignments.push(assignment);
+    this.save();
+    this.recordAudit('assignment.create', 'Created "' + assignment.title + '" for ' + assignment.unitCode + ', due ' + fmtDate(assignment.dueAt) + '.', this.user(userId));
+    return assignment;
+  },
+  gradeSubmission(submissionId, score, feedback, graderId) {
+    const sub = this.data.submissions.find(s => s.id === submissionId);
+    if (!sub) return;
+    const assignment = this.data.assignments.find(a => a.id === sub.assignmentId);
+    sub.score = clamp(score, 0, assignment ? assignment.maxScore : 100);
+    sub.feedback = String(feedback || '');
+    sub.gradedAt = isoAt(0);
+    sub.gradedBy = graderId;
+    this.addNotice({
+      title: 'Assignment graded', type: 'system',
+      message: (assignment ? assignment.title : 'Your assignment') + ' has been graded. Open Assignments to view your score and feedback.',
+      userId: sub.studentId, createdBy: graderId
+    });
+    this.save();
+    this.recordAudit('assignment.grade', 'Graded "' + (assignment ? assignment.title : 'assignment') + '" for ' + (this.user(sub.studentId) || {}).name + ': ' + sub.score + '/' + (assignment ? assignment.maxScore : '—') + '.', this.user(graderId));
+  },
+
+  sessionsForUnit(unitCode) {
+    return this.data.sessions.filter(s => s.unitCode === unitCode).sort((a, b) => new Date(b.openedAt) - new Date(a.openedAt));
+  },
+  openSessionsForStudent(userId) {
+    const unitCodes = this.registrationsFor(userId, this.data.meta.termCode).map(r => r.unitCode);
+    return this.data.sessions.filter(s => s.status === 'open' && unitCodes.includes(s.unitCode) && new Date(s.closesAt).getTime() > nowMs());
+  },
+  createSession(unitCode, lecturerId, minutes) {
+    const session = {
+      id: uid('ses'), unitCode, lecturerId, code: randomDigits(6),
+      openedAt: isoAt(0), closesAt: isoAt((Number(minutes) || 30) * 60000), status: 'open'
+    };
+    this.data.sessions.push(session);
+    this.save();
+    return session;
+  },
+  closeSession(id) {
+    const s = this.data.sessions.find(x => x.id === id);
+    if (s) { s.status = 'closed'; s.closesAt = isoAt(0); this.save(); }
+  },
+  signIn(code, studentId) {
+    const key = String(code || '').trim();
+    const session = this.data.sessions.find(s => s.code === key && s.status === 'open');
+    if (!session) return { error: 'code' };
+    if (new Date(session.closesAt).getTime() < nowMs()) return { error: 'expired' };
+    if (!this.isRegistered(studentId, session.unitCode)) return { error: 'unit' };
+    const exists = this.data.attendance.some(a => a.sessionId === session.id && a.studentId === studentId);
+    if (exists) return { error: 'already' };
+    this.data.attendance.push({ id: uid('att'), sessionId: session.id, studentId, at: isoAt(0) });
+    this.save();
+    return { ok: true, session };
+  },
+  attendanceForSession(sessionId) {
+    return this.data.attendance.filter(a => a.sessionId === sessionId);
+  },
+  attendanceSummary(studentId) {
+    const regs = this.registrationsFor(studentId, this.data.meta.termCode);
+    return regs.map(r => {
+      const sessions = this.data.sessions.filter(s => s.unitCode === r.unitCode);
+      const ids = sessions.map(s => s.id);
+      const attended = this.data.attendance.filter(a => a.studentId === studentId && ids.includes(a.sessionId)).length;
+      return {
+        unitCode: r.unitCode, unit: this.unit(r.unitCode),
+        held: sessions.length, attended,
+        percent: sessions.length ? Math.round((attended / sessions.length) * 100) : 0
+      };
+    });
+  },
+  overallAttendance(studentId) {
+    const summary = this.attendanceSummary(studentId);
+    const held = summary.reduce((a, b) => a + b.held, 0);
+    const attended = summary.reduce((a, b) => a + b.attended, 0);
+    return { held, attended, percent: held ? Math.round((attended / held) * 100) : 0 };
+  },
+
+  /* ---------------- Daily gate check-in / check-out ---------------- */
+
+  checkinWindows() {
+    if (!this.data.meta.checkin) this.data.meta.checkin = Object.assign({}, CHECKIN_DEFAULTS);
+    return Object.assign({}, CHECKIN_DEFAULTS, this.data.meta.checkin);
+  },
+
+  saveCheckinWindows(patch) {
+    const w = this.checkinWindows();
+    ['inStart', 'inEnd', 'outStart', 'outEnd'].forEach(k => {
+      const value = String((patch || {})[k] || '').trim();
+      if (HM_RE.test(value)) w[k] = value;
+    });
+    this.data.meta.checkin = w;
+    this.save();
+    this.recordAudit('checkin.windows', 'Set check-in window to ' + hmLabel(w.inStart) + '–' + hmLabel(w.inEnd) + ' and check-out to ' + hmLabel(w.outStart) + '–' + hmLabel(w.outEnd) + '.');
+    return w;
+  },
+
+  setCheckinPause(kind, paused) {
+    const w = this.checkinWindows();
+    if (kind === 'in') w.pausedIn = !!paused; else if (kind === 'out') w.pausedOut = !!paused;
+    w.pausedDate = localDateKey();
+    this.data.meta.checkin = w;
+    this.save();
+    this.recordAudit('checkin.pause', (paused ? 'Paused ' : 'Resumed ') + (kind === 'in' ? 'check-ins' : 'check-outs') + ' for today.');
+    return w;
+  },
+
+  setCheckinBiometric(required) {
+    const w = this.checkinWindows();
+    w.biometricRequired = !!required;
+    this.data.meta.checkin = w;
+    this.save();
+    this.recordAudit('checkin.biometric', (required ? 'Biometric check-in required.' : 'Biometric check-in made optional.'));
+    return w;
+  },
+
+  checkinStatus() {
+    const windows = this.checkinWindows();
+    const hm = nowHM();
+    const today = localDateKey();
+    const pausedIn = windows.pausedIn && windows.pausedDate === today;
+    const pausedOut = windows.pausedOut && windows.pausedDate === today;
+    return {
+      date: today, now: hm, windows,
+      inOpen: !pausedIn && hmBetween(hm, windows.inStart, windows.inEnd),
+      outOpen: !pausedOut && hmBetween(hm, windows.outStart, windows.outEnd),
+      pausedIn, pausedOut,
+      before: hm < windows.inStart,
+      after: hm > windows.outEnd
+    };
+  },
+
+  checkinFor(studentId, date) {
+    const key = date || localDateKey();
+    return (this.data.checkins || []).find(c => c.studentId === studentId && c.date === key) || null;
+  },
+
+  /* A student's own check-in history (read-only), newest first. */
+  checkinsOf(studentId, limit) {
+    return (this.data.checkins || []).filter(c => c.studentId === studentId)
+      .sort((a, b) => String(b.date).localeCompare(String(a.date))).slice(0, limit || 30);
+  },
+
+  checkinsFor(date) {
+    const key = date || localDateKey();
+    return (this.data.checkins || []).filter(c => c.date === key);
+  },
+
+  recordCheckin(studentId, kind, opts) {
+    opts = opts || {};
+    const actor = this.user(opts.actorId);
+    if (!actor || actor.role !== 'secretary') return { error: 'forbidden' };
+    const student = this.user(studentId);
+    if (!student || student.role !== 'student' || student.status !== 'active') return { error: 'student' };
+    const status = this.checkinStatus();
+    if (!opts.override) {
+      if (kind === 'in') {
+        if (status.pausedIn) return { error: 'paused', label: 'check-in' };
+        if (!status.inOpen) return { error: 'closed', window: hmLabel(status.windows.inStart) + ' – ' + hmLabel(status.windows.inEnd), label: 'check-in' };
+      } else {
+        if (status.pausedOut) return { error: 'paused', label: 'check-out' };
+        if (!status.outOpen) return { error: 'closed', window: hmLabel(status.windows.outStart) + ' – ' + hmLabel(status.windows.outEnd), label: 'check-out' };
+      }
+    }
+    const method = opts.method || 'self';
+    if (method === 'biometric' && !opts.biometricVerified) return { error: 'biometric' };
+    let rec = this.checkinFor(studentId, status.date);
+    if (kind === 'in') {
+      if (rec && rec.checkInAt) return { error: 'already', label: 'already checked in' };
+      if (!rec) {
+        rec = { id: uid('chk'), studentId, date: status.date, checkInAt: '', checkOutAt: '', inBy: null, outBy: null, inMethod: '', outMethod: '', late: false };
+        this.data.checkins.push(rec);
+      }
+      rec.checkInAt = isoAt(0);
+      rec.inBy = opts.actorId || studentId;
+      rec.inMethod = method;
+      rec.late = hmBetween(nowHM(), CHECKIN_LATE_AFTER, '23:59');
+    } else {
+      if (rec && rec.checkOutAt) return { error: 'already', label: 'already checked out' };
+      if (!rec || !rec.checkInAt) return { error: 'no-checkin' };
+      rec.checkOutAt = isoAt(0);
+      rec.outBy = opts.actorId || studentId;
+      rec.outMethod = method;
+    }
+    this.save();
+    const who = student.name + ' (' + (student.admissionNo || '') + ')';
+    this.recordAudit('checkin.' + kind, (kind === 'in' ? 'Checked in' : 'Checked out') + ' ' + who + ' — ' + (method === 'biometric' ? 'biometric' : method === 'desk' ? 'secretary desk' : 'self') + '.', this.user(opts.actorId || studentId));
+    return { ok: true, record: rec };
+  },
+
+  deskCheckin(admissionNo, kind, secretaryId, biometricVerified) {
+    const key = String(admissionNo || '').trim().toUpperCase();
+    if (!key) return { error: 'student' };
+    const student = this.data.users.find(u => u.role === 'student' && String(u.admissionNo || '').toUpperCase() === key);
+    if (!student) return { error: 'student' };
+    return this.recordCheckin(student.id, kind, { actorId: secretaryId, method: biometricVerified ? 'biometric' : 'desk', override: true, biometricVerified: !!biometricVerified });
+  },
+
+  setBiometricCredential(userId, record) {
+    const user = this.user(userId);
+    if (!user) return { error: 'missing' };
+    const by = this.currentUser();
+    if (!by || by.role !== 'secretary') return { error: 'forbidden' };
+    user.bioCredentialId = record.credentialId;
+    user.bioAlg = record.alg;
+    user.bioPublicKey = record.publicKey || '';
+    user.bioRegisteredAt = record.registeredAt;
+    this.save();
+    const actor = this.currentUser();
+    this.recordAudit('biometric.register', 'Registered biometric check-in for ' + user.name + ' (' + (user.admissionNo || '') + ')' +
+      (' at the secretary desk.'), actor);
+    return { ok: true };
+  },
+
+  clearBiometricCredential(userId) {
+    const user = this.user(userId);
+    if (!user) return;
+    const by = this.currentUser();
+    if (!by || by.role !== 'secretary') return;
+    delete user.bioCredentialId; delete user.bioAlg; delete user.bioPublicKey; delete user.bioRegisteredAt;
+    this.save();
+    this.recordAudit('biometric.remove', 'Removed the biometric registration of ' + user.name + ' (' + (user.admissionNo || '') + ').', this.currentUser());
+  },
+
+  invoicesFor(studentId) { return this.data.invoices.filter(i => i.studentId === studentId); },
+  invoiceFor(studentId, termCode) { return this.data.invoices.find(i => i.studentId === studentId && i.termCode === (termCode || this.data.meta.termCode)) || null; },
+  paymentsFor(studentId) { return this.data.payments.filter(p => p.studentId === studentId).sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); },
+  feeSummary(studentId) {
+    const invoices = this.invoicesFor(studentId);
+    const billed = invoices.reduce((a, b) => a + b.total, 0);
+    const paid = this.paymentsFor(studentId).filter(p => p.status === 'verified').reduce((a, b) => a + b.amount, 0);
+    const pending = this.paymentsFor(studentId).filter(p => p.status === 'pending').reduce((a, b) => a + b.amount, 0);
+    return { billed, paid, pending, balance: Math.max(0, billed - paid) };
+  },
+  recordPayment(studentId, amount, reference, method, proof) {
+    const amt = Number(amount);
+    if (!amt || amt <= 0 || !String(reference || '').trim()) return { error: 'invalid' };
+    proof = proof && proof.fileId ? proof : null;
+    if (!proof) return { error: 'proof' };
+    const payment = {
+      id: uid('pay'), studentId, amount: amt, method: method || 'M-Pesa',
+      reference: String(reference).trim().toUpperCase(), status: 'pending', createdAt: isoAt(0),
+      proofFileId: proof ? proof.fileId : '',
+      proofName: proof ? String(proof.name || 'payment-proof') : '',
+      proofMime: proof ? String(proof.mime || 'application/octet-stream') : '',
+      proofSize: proof ? Number(proof.size) || 0 : 0
+    };
+    this.data.payments.push(payment);
+    const student = this.user(studentId) || {};
+    this.addNotice({
+      title: 'New payment awaiting verification', type: 'system',
+      message: student.name + ' submitted Ksh. ' + amt.toLocaleString('en-KE') + ' with reference ' + payment.reference +
+        (proof ? ' and attached the M-Pesa message as proof.' : '') + '. Verify it in Payments.',
+      audience: 'role', role: 'campus_admin', campus: student.campus, createdBy: studentId
+    });
+    this.save();
+    return { ok: true, payment };
+  },
+  verifyPayment(paymentId, adminId) {
+    const p = this.data.payments.find(x => x.id === paymentId);
+    if (!p) return;
+    p.status = 'verified'; p.verifiedBy = adminId; p.verifiedAt = isoAt(0);
+    this.addNotice({
+      title: 'Payment verified', type: 'system',
+      message: 'Your payment of Ksh. ' + p.amount.toLocaleString('en-KE') + ' (ref ' + p.reference + ') has been verified. Your fee balance has been updated.',
+      userId: p.studentId, createdBy: adminId
+    });
+    this.save();
+    const student = this.user(p.studentId);
+    this.recordAudit('payment.verify', 'Verified ' + p.method + ' reference ' + p.reference + ' — ' + money(p.amount) + ' for ' + (student ? student.name : 'student') + '.', this.user(adminId));
+  },
+  rejectPayment(paymentId, adminId) {
+    const p = this.data.payments.find(x => x.id === paymentId);
+    if (!p) return;
+    p.status = 'rejected'; p.verifiedBy = adminId; p.verifiedAt = isoAt(0);
+    this.addNotice({
+      title: 'Payment could not be verified', type: 'system',
+      message: 'We could not verify your payment reference ' + p.reference + '. Please check the M-Pesa code and contact the finance office.',
+      userId: p.studentId, createdBy: adminId
+    });
+    this.save();
+    const student = this.user(p.studentId);
+    this.recordAudit('payment.reject', 'Rejected ' + p.method + ' reference ' + p.reference + ' — ' + money(p.amount) + ' for ' + (student ? student.name : 'student') + '.', this.user(adminId));
+  },
+  savePaybills(fees, hostel) {
+    this.data.meta.paybills = {
+      fees: {
+        channel: 'paybill', accountMode: 'student-name-k',
+        paybill: String(fees.paybill || '').trim(), name: String(fees.name || '').trim(),
+        accountHint: String(fees.accountHint || '').trim(), demo: false
+      },
+      hostel: {
+        channel: 'buygoods', accountMode: 'none',
+        paybill: String(hostel.paybill || '').trim(), name: String(hostel.name || '').trim(),
+        accountHint: String(hostel.accountHint || '').trim(), demo: false
+      }
+    };
+    this.data.meta.paybillsVersion = 2;
+    this.save();
+    this.recordAudit('finance.paybills', 'Updated the M-Pesa paybill to ' + this.data.meta.paybills.fees.paybill + ' and hostel till to ' + this.data.meta.paybills.hostel.paybill + '.');
+  },
+  hostelBookingsFor(studentId) { return this.data.hostelBookings.filter(b => b.studentId === studentId); },
+  bookHostel(studentId, hostelId) {
+    if (!hostelId) return { error: 'missing' };
+    const existing = this.data.hostelBookings.find(b => b.studentId === studentId && b.termCode === this.data.meta.termCode && b.status !== 'rejected');
+    if (existing) return { error: 'exists' };
+    const booking = { id: uid('hb'), studentId, hostelId, termCode: this.data.meta.termCode, status: 'pending', createdAt: isoAt(0) };
+    this.data.hostelBookings.push(booking);
+    const student = this.user(studentId) || {};
+    this.addNotice({
+      title: 'New hostel booking request', type: 'system',
+      message: student.name + ' requested ' + (HOSTELS.find(h => h.id === hostelId) || {}).room + '. Review it in Payments.',
+      audience: 'role', role: 'campus_admin', campus: student.campus, createdBy: studentId
+    });
+    this.save();
+    return { ok: true, booking };
+  },
+  setBookingStatus(bookingId, status, adminId) {
+    const booking = this.data.hostelBookings.find(b => b.id === bookingId);
+    if (!booking) return;
+    booking.status = status;
+    booking.reviewedBy = adminId;
+    booking.reviewedAt = isoAt(0);
+    const hostel = HOSTELS.find(h => h.id === booking.hostelId);
+    this.addNotice({
+      title: status === 'approved' ? 'Hostel booking approved' : 'Hostel booking declined', type: 'system',
+      message: status === 'approved'
+        ? 'Your booking for ' + (hostel ? hostel.room : 'hostel accommodation') + ' has been approved. Pay Ksh. ' + (hostel ? hostel.perTerm.toLocaleString('en-KE') : '') + ' via the hostel M-Pesa Buy Goods till.'
+        : 'Your hostel booking request was not approved. Please contact the accommodation office for available options.',
+      userId: booking.studentId, createdBy: adminId
+    });
+    this.save();
+    const student = this.user(booking.studentId);
+    this.recordAudit('hostel.' + status, (status === 'approved' ? 'Approved' : 'Declined') + ' the hostel booking of ' + (student ? student.name : 'student') + ' for ' + (hostel ? hostel.room : 'accommodation') + '.', this.user(adminId));
+  },
+
+  feedbackFor(userId) { return this.data.feedback.find(f => f.userId === userId) || null; },
+  rateApp(userId, stars, message) {
+    let f = this.feedbackFor(userId);
+    if (!f) {
+      f = { id: uid('fb'), userId, stars: 0, message: '', createdAt: isoAt(0) };
+      this.data.feedback.push(f);
+    }
+    f.stars = clamp(stars, 1, 5);
+    f.message = String(message || '');
+    f.createdAt = isoAt(0);
+    this.save();
+  },
+
+  noticesFor(user) {
+    if (!user) return [];
+    return this.data.notices.filter(n => {
+      if (n.userId) return n.userId === user.id;
+      if (n.campus && n.campus !== ALL_CAMPUSES && user.campus !== n.campus && user.campus !== ALL_CAMPUSES) return false;
+      if (n.role) return n.role === user.role;
+      if (n.audience === 'all') return true;
+      if (n.audience === 'students') return user.role === 'student' || user.role === 'council';
+      if (n.audience === 'staff') return isStaffRole(user.role);
+      if (n.audience === 'admins') return isAdminRole(user.role);
+      if (n.audience === 'council') return user.role === 'council';
+      return false;
+    }).sort((a, b) => {
+      if (!!b.pinned !== !!a.pinned) return b.pinned ? 1 : -1;
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
+  },
+  unreadCount(user) {
+    const readAt = this.settings(user).noticesReadAt || 0;
+    return this.noticesFor(user).filter(n => new Date(n.createdAt).getTime() > readAt).length;
+  },
+  markNoticesRead() {
+    const user = this.currentUser();
+    if (!user) return;
+    this.settings(user).noticesReadAt = nowMs();
+    this.save();
+  },
+  addNotice(payload) {
+    this.data.notices.push(Object.assign({
+      id: uid('nt'), type: 'system', title: '', message: '', createdBy: 'system',
+      createdAt: isoAt(0), pinned: false
+    }, payload));
+    this.save();
+  },
+  createAnnouncement(payload, userId) {
+    this.addNotice({
+      title: payload.title, message: payload.message, type: 'announcement',
+      audience: payload.audience || 'all', campus: payload.campus || '', createdBy: userId, pinned: !!payload.pinned
+    });
+    this.recordAudit('notice.create', 'Published the announcement "' + payload.title + '" to ' + audienceLabel(payload.audience || 'all') + '.', this.user(userId));
+  },
+  deleteNotice(id) {
+    const notice = this.data.notices.find(n => n.id === id);
+    this.data.notices = this.data.notices.filter(n => n.id !== id);
+    this.save();
+    if (notice) this.recordAudit('notice.delete', 'Deleted the announcement "' + notice.title + '".');
+  },
+
+  updateMeta(patch) {
+    Object.assign(this.data.meta, patch);
+    this.save();
+    this.recordAudit('registry.update', 'Updated academic settings — term ' + this.data.meta.termLabel + ' (' + this.data.meta.termCode + '), registration ' + (this.data.meta.registrationOpen ? 'open' : 'closed') + '.');
+  },
+
+  presenceOf(userId) {
+    const p = this.data.presence[userId];
+    if (!p) return { online: false, lastSeen: null };
+    return { online: !!p.online && (nowMs() - p.lastSeen) < 90000, lastSeen: p.lastSeen };
+  },
+  team() {
+    return this.data.users
+      .filter(u => ((isStaffRole(u.role) && u.role !== 'owner') && u.status === 'active') || u.role === 'council')
+      .map(u => Object.assign({}, u, { presence: this.presenceOf(u.id) }));
+  },
+  pendingUsers() { return this.data.users.filter(u => u.status === 'pending'); },
+  recentPendingPayments(campus) { return this.paymentsForCampus(campus).filter(p => p.status === 'pending').sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt)); },
+  financeSummary(campus) {
+    const all = this.paymentsForCampus(campus);
+    const pending = all.filter(p => p.status === 'pending');
+    const verified = all.filter(p => p.status === 'verified');
+    const ids = (!campus || campus === ALL_CAMPUSES) ? null : this.data.users.filter(u => u.campus === campus).map(u => u.id);
+    const billed = this.data.invoices.filter(i => !ids || ids.indexOf(i.studentId) !== -1).reduce((a, b) => a + b.total, 0);
+    return {
+      pending: pending.reduce((a, b) => a + b.amount, 0),
+      pendingCount: pending.length,
+      verified: verified.reduce((a, b) => a + b.amount, 0),
+      verifiedCount: verified.length,
+      billed,
+      total: all.length
+    };
+  },
+  usersForCampus(campus) {
+    if (!campus || campus === ALL_CAMPUSES) return this.data.users.slice();
+    return this.data.users.filter(u => u.campus === campus);
+  },
+  paymentsForCampus(campus) {
+    if (!campus || campus === ALL_CAMPUSES) return this.data.payments.slice();
+    const ids = this.data.users.filter(u => u.campus === campus).map(u => u.id);
+    return this.data.payments.filter(p => ids.indexOf(p.studentId) !== -1);
+  },
+  hostelBookingsForCampus(campus) {
+    if (!campus || campus === ALL_CAMPUSES) return this.data.hostelBookings.slice();
+    const ids = this.data.users.filter(u => u.campus === campus).map(u => u.id);
+    return this.data.hostelBookings.filter(b => ids.indexOf(b.studentId) !== -1);
+  },
+  attendancePercentFor(students) {
+    let held = 0, attended = 0;
+    students.forEach(s => { const a = this.overallAttendance(s.id); held += a.held; attended += a.attended; });
+    return { held, attended, percent: held ? Math.round(attended / held * 100) : 0 };
+  },
+  publishedRateFor(students) {
+    const ids = students.map(s => s.id);
+    const marks = this.data.marks.filter(m => ids.indexOf(m.studentId) !== -1);
+    const published = marks.filter(m => m.published).length;
+    return { total: marks.length, published, percent: marks.length ? Math.round(published / marks.length * 100) : 0 };
+  },
+  campusSummary() {
+    return CAMPUSES.map(campus => {
+      const users = this.data.users.filter(u => u.campus === campus);
+      const students = users.filter(u => u.role === 'student' && u.status === 'active');
+      const staff = users.filter(u => isStaffRole(u.role) && u.status === 'active');
+      const pending = this.data.users.filter(u => u.status === 'pending' && u.campus === campus);
+      const payments = this.paymentsForCampus(campus);
+      const attendance = this.attendancePercentFor(students);
+      return {
+        campus, students: students.length, staff: staff.length, pending: pending.length,
+        attendance: attendance.percent,
+        pendingPayments: payments.filter(p => p.status === 'pending').reduce((a, b) => a + b.amount, 0),
+        pendingPaymentCount: payments.filter(p => p.status === 'pending').length,
+        hostelRequests: this.hostelBookingsForCampus(campus).filter(b => b.status === 'pending').length
+      };
+    });
+  },
+  qualitySnapshot() {
+    const students = this.data.users.filter(u => u.role === 'student' && u.status === 'active');
+    const attendance = this.attendancePercentFor(students);
+    const published = this.publishedRateFor(students);
+    const pendingPayments = this.data.payments.filter(p => p.status === 'pending');
+    const openSessions = this.data.sessions.filter(s => s.status === 'open');
+    const units = this.data.units.filter(u => u.current);
+    const ungraded = this.data.submissions.filter(s => s.score === null).length;
+    return {
+      students: students.length,
+      staff: this.data.users.filter(u => isStaffRole(u.role) && u.status === 'active').length,
+      attendance: attendance.percent,
+      held: attendance.held,
+      published: published.percent,
+      publishedTotal: published.total,
+      pendingApprovals: this.data.users.filter(u => u.status === 'pending').length,
+      pendingPayments: pendingPayments.reduce((a, b) => a + b.amount, 0),
+      pendingPaymentCount: pendingPayments.length,
+      openSessions: openSessions.length,
+      units: units.length,
+      ungraded,
+      campuses: this.campusSummary()
+    };
+  },
+
+  programmeStats(programme) {
+    const units = this.data.units.filter(u => u.current && u.programme === programme);
+    const students = this.data.users.filter(u => u.role === 'student' && u.programme === programme && u.status === 'active');
+    return { units: units.length, students: students.length };
+  },
+
+  /* ---------------- Audit trail ---------------- */
+
+  recordAudit(action, detail, actorOverride) {
+    if (!this.data) return null;
+    if (!Array.isArray(this.data.audit)) this.data.audit = [];
+    const actor = actorOverride || this.currentUser() || {};
+    const entry = {
+      id: uid('au'), at: isoAt(0), action,
+      detail: String(detail || ''),
+      actorId: actor.id || null,
+      actorName: actor.name || 'System',
+      role: actor.role || 'system',
+      campus: actor.campus || ''
+    };
+    this.data.audit.unshift(entry);
+    if (this.data.audit.length > AUDIT_LIMIT) this.data.audit.length = AUDIT_LIMIT;
+    this.save();
+    return entry;
+  },
+  auditLog(limit) { return (this.data.audit || []).slice(0, limit || 80); },
+
+  /* ---------------- Document vault ---------------- */
+
+  documentCategories() { return DOCUMENT_CATEGORIES.slice(); },
+  document(id) { return (this.data.documents || []).find(d => d.id === id) || null; },
+  documentsFor(user) {
+    const docs = this.data.documents || [];
+    if (!user) return [];
+    if (isStaffRole(user.role)) {
+      return docs.filter(d => user.campus === ALL_CAMPUSES || !d.campus || d.campus === ALL_CAMPUSES || d.campus === user.campus);
+    }
+    return docs.filter(d => d.audience !== 'staff' && (!d.campus || d.campus === ALL_CAMPUSES || d.campus === user.campus));
+  },
+  addDocument(payload, userId) {
+    if (!Array.isArray(this.data.documents)) this.data.documents = [];
+    const doc = {
+      id: uid('doc'),
+      title: String(payload.title || '').trim(),
+      category: DOCUMENT_CATEGORIES.indexOf(payload.category) === -1 ? 'Other' : payload.category,
+      summary: String(payload.summary || '').trim(),
+      body: String(payload.body || ''),
+      filename: payload.filename || '',
+      mime: payload.mime || 'text/plain',
+      size: Number(payload.size) || 0,
+      fileId: payload.fileId || '',
+      dataUrl: payload.fileId ? '' : (payload.dataUrl || ''),
+      audience: payload.audience === 'students' || payload.audience === 'staff' ? payload.audience : 'all',
+      campus: payload.campus || ALL_CAMPUSES,
+      slot: ['class', 'exam', 'results'].indexOf(payload.slot) === -1 ? '' : payload.slot,
+      unitCode: String(payload.unitCode || '').trim().toUpperCase(),
+      termCode: payload.termCode || '',
+      createdBy: userId || null,
+      createdAt: isoAt(0)
+    };
+    if (!doc.title) return { error: 'title' };
+    this.data.documents.unshift(doc);
+    this.save();
+    this.recordAudit('document.add', 'Added "' + doc.title + '" to the document vault (' + doc.category + ', ' + audienceLabel(doc.audience) + ').');
+    return { ok: true, document: doc };
+  },
+  timetableDocument(slot, user) {
+    const docs = (this.data.documents || []).filter(d => d.slot === slot);
+    return docs
+      .filter(d => !user || user.campus === ALL_CAMPUSES || !d.campus || d.campus === ALL_CAMPUSES || d.campus === user.campus)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+  },
+  resultSheet(unitCode, user) {
+    const code = String(unitCode || '').toUpperCase();
+    const term = this.data.meta.termCode;
+    return (this.data.documents || [])
+      .filter(d => d.slot === 'results' && d.unitCode === code && d.termCode === term)
+      .filter(d => !user || user.campus === ALL_CAMPUSES || !d.campus || d.campus === ALL_CAMPUSES || d.campus === user.campus)
+      .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt))[0] || null;
+  },
+  deleteDocument(id) {
+    const doc = this.document(id);
+    if (!doc) return { error: 'missing' };
+    this.data.documents = this.data.documents.filter(d => d.id !== id);
+    this.save();
+    this.recordAudit('document.delete', 'Removed "' + doc.title + '" from the document vault.');
+    return { ok: true };
+  },
+
+  /* ---------------- Analytics ---------------- */
+
+  averageFor(studentId) {
+    const marks = this.data.marks.filter(m => m.studentId === studentId && m.published);
+    if (!marks.length) return null;
+    return Math.round(marks.reduce((sum, m) => sum + (Number(m.total) || 0), 0) / marks.length);
+  },
+  termLabelFor(termCode) {
+    if (termCode === this.data.meta.termCode) return this.data.meta.termLabel;
+    const unit = this.data.units.find(u => u.termCode === termCode && u.termLabel);
+    return unit ? unit.termLabel : termCode;
+  },
+  passRateTrend(programme) {
+    const codes = this.data.units.filter(u => !programme || u.programme === programme).map(u => u.code);
+    const buckets = {};
+    this.data.marks.filter(m => codes.indexOf(m.unitCode) !== -1).forEach(m => {
+      const term = m.termCode || this.data.meta.termCode;
+      if (!buckets[term]) buckets[term] = { termCode: term, total: 0, passed: 0, sum: 0 };
+      buckets[term].total++;
+      buckets[term].sum += Number(m.total) || 0;
+      if ((Number(m.total) || 0) >= 50) buckets[term].passed++;
+    });
+    return Object.keys(buckets).sort().map(term => {
+      const b = buckets[term];
+      return {
+        termCode: term, termLabel: this.termLabelFor(term),
+        total: b.total, passed: b.passed,
+        rate: b.total ? Math.round(b.passed / b.total * 100) : 0,
+        average: b.total ? Math.round(b.sum / b.total) : 0
+      };
+    });
+  },
+  atRiskStudents(campus) {
+    const students = this.data.users.filter(u => u.role === 'student' && u.status === 'active' &&
+      (!campus || campus === ALL_CAMPUSES || u.campus === campus));
+    return students.map(s => {
+      const attendance = this.overallAttendance(s.id);
+      const average = this.averageFor(s.id);
+      const failed = this.data.marks.filter(m => m.studentId === s.id && m.published && (Number(m.total) || 0) < 40).length;
+      const reasons = [];
+      if (attendance.held && attendance.percent < 75) reasons.push('Attendance ' + attendance.percent + '%');
+      if (average !== null && average < 50) reasons.push('Average ' + average + '%');
+      if (failed) reasons.push(failed + ' failed unit' + (failed === 1 ? '' : 's'));
+      return { student: s, attendance: attendance.percent, average, failed, reasons };
+    }).filter(r => r.reasons.length).sort((a, b) => (a.average === null ? 100 : a.average) - (b.average === null ? 100 : b.average) || a.attendance - b.attendance);
+  },
+  lecturerWorkload() {
+    return this.data.users.filter(u => u.role === 'lecturer' && u.status === 'active').map(l => {
+      const units = this.data.units.filter(u => u.current && u.lecturer === l.id);
+      const codes = units.map(u => u.code);
+      const students = new Set(this.data.registrations.filter(r => codes.indexOf(r.unitCode) !== -1 && r.termCode === this.data.meta.termCode).map(r => r.studentId));
+      const assignmentIds = this.data.assignments.filter(a => codes.indexOf(a.unitCode) !== -1).map(a => a.id);
+      const ungraded = this.data.submissions.filter(s => assignmentIds.indexOf(s.assignmentId) !== -1 && s.score === null).length;
+      const sessions = this.data.sessions.filter(s => codes.indexOf(s.unitCode) !== -1).length;
+      return { id: l.id, name: l.name, campus: l.campus, units: units.length, unitList: codes, students: students.size, ungraded, sessions };
+    }).sort((a, b) => b.students - a.students);
+  }
+};

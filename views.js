@@ -1,0 +1,1507 @@
+/* TSMHST Portal — application shell, authentication and student/staff views */
+const PORTAL_STATE = {
+  marks: { unitCode: null, sort: 'admission', order: null },
+  attendance: { unitCode: null, code: '' },
+  timetable: { tab: 'classes', programme: 'all' },
+  documents: { category: 'All' },
+  asgFilter: 'all'
+};
+
+const DAYS_SHORT = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+const PORTAL_NAV = [
+  { route: 'team', label: 'Team', icon: 'users' },
+  { route: 'about', label: 'About', icon: 'info' },
+  { route: 'settings', label: 'Settings', icon: 'settings' }
+];
+
+function navGroups(role) {
+  const groups = [];
+  const portal = items => groups.push({ label: 'Portal', items: items || PORTAL_NAV });
+  const comms = () => groups.push({ label: 'Communication', items: [{ route: 'announcements', label: 'Announcements', icon: 'megaphone' }] });
+  if (role === 'owner') {
+    groups.push({ label: 'Owner', items: [{ route: 'settings', label: 'App settings', icon: 'settings' }] });
+  } else if (role === 'student') {
+    groups.push({
+      label: 'Main', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'units', label: 'Units', icon: 'book' },
+        { route: 'assignments', label: 'Assignments', icon: 'clipboard' },
+        { route: 'timetable', label: 'Timetable', icon: 'calendar' },
+        { route: 'results', label: 'Results', icon: 'chart' },
+        { route: 'attendance', label: 'Attendance', icon: 'check' }
+      ]
+    });
+    groups.push({
+      label: 'Academic', items: [
+        { route: 'transcript', label: 'Transcript', icon: 'file' },
+        { route: 'fees', label: 'Fees', icon: 'wallet' },
+        { route: 'hostel', label: 'Hostel', icon: 'bed' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
+      ]
+    });
+    portal();
+  } else if (role === 'lecturer') {
+    groups.push({
+      label: 'Teaching', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'units', label: 'My units', icon: 'book' },
+        { route: 'timetable', label: 'Timetable', icon: 'calendar' },
+        { route: 'attendance', label: 'Attendance', icon: 'check' },
+        { route: 'marks', label: 'Marks', icon: 'marks' },
+        { route: 'assignments', label: 'Assignments', icon: 'clipboard' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
+      ]
+    });
+    comms();
+    portal();
+  } else if (isExecRole(role)) {
+    groups.push({
+      label: 'Oversight', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'campuses', label: 'Campuses', icon: 'academics' },
+        { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+        { route: 'users', label: 'Users', icon: 'users' },
+        { route: 'marks', label: 'Marks oversight', icon: 'marks' },
+        { route: 'timetable', label: 'Timetable & exams', icon: 'calendar' }
+      ]
+    });
+    comms();
+    groups.push({ label: 'Service', items: [{ route: 'quality', label: 'Quality assurance', icon: 'shield' }, { route: 'documents', label: 'Documents', icon: 'file' }] });
+    portal();
+  } else if (role === 'principal') {
+    groups.push({
+      label: 'Campus', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+        { route: 'users', label: 'Users', icon: 'users' },
+        { route: 'payments', label: 'Payments', icon: 'wallet' },
+        { route: 'academics', label: 'Academics', icon: 'academics' },
+        { route: 'timetable', label: 'Timetable & exams', icon: 'calendar' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
+      ]
+    });
+    comms();
+    portal();
+  } else if (role === 'campus_admin') {
+    groups.push({
+      label: 'Campus', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+        { route: 'users', label: 'Users', icon: 'users' },
+        { route: 'payments', label: 'Payments', icon: 'wallet' },
+        { route: 'feesdesk', label: 'Fees desk', icon: 'finance' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
+      ]
+    });
+    comms();
+    portal();
+  } else if (role === 'registrar') {
+    groups.push({
+      label: 'Academic registry', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'academics', label: 'Academics', icon: 'academics' },
+        { route: 'timetable', label: 'Timetable & exams', icon: 'calendar' },
+        { route: 'users', label: 'Users', icon: 'users' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
+      ]
+    });
+    comms();
+    portal();
+  } else if (role === 'exam_officer') {
+    groups.push({
+      label: 'Examinations', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'marks', label: 'Marks studio', icon: 'marks' },
+        { route: 'timetable', label: 'Timetable & exams', icon: 'calendar' },
+        { route: 'academics', label: 'Academics', icon: 'academics' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
+      ]
+    });
+    comms();
+    portal();
+  } else if (role === 'qa_officer') {
+    groups.push({
+      label: 'Quality assurance', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'quality', label: 'Service quality', icon: 'shield' },
+        { route: 'campuses', label: 'Campuses', icon: 'academics' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
+      ]
+    });
+    comms();
+    portal();
+  } else if (role === 'accounts_clerk') {
+    groups.push({
+      label: 'Finance office', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'finance', label: 'Finance', icon: 'finance' },
+        { route: 'feesdesk', label: 'Fees desk', icon: 'wallet' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
+      ]
+    });
+    comms();
+    portal();
+  } else if (role === 'secretary') {
+    groups.push({
+      label: 'Administration', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'checkin', label: 'Check-in desk', icon: 'clock' },
+        { route: 'announcements', label: 'Announcements', icon: 'megaphone' },
+        { route: 'users', label: 'Users', icon: 'users' },
+        { route: 'documents', label: 'Documents', icon: 'file' }
+      ]
+    });
+    portal();
+  } else if (role === 'council') {
+    groups.push({
+      label: 'Student Council', items: [
+        { route: 'home', label: 'Home', icon: 'home' },
+        { route: 'announcements', label: 'Announcements', icon: 'megaphone' },
+        { route: 'team', label: 'Team & presence', icon: 'users' }
+      ]
+    });
+    groups.push({
+      label: 'Portal', items: [
+        { route: 'documents', label: 'Documents', icon: 'file' },
+        { route: 'about', label: 'About', icon: 'info' },
+        { route: 'settings', label: 'Settings', icon: 'settings' }
+      ]
+    });
+  }
+  return groups;
+}
+
+function routeTitle(route) {
+  const titles = {
+    home: 'Home', units: 'Units', assignments: 'Assignments', results: 'Results', transcript: 'Transcript',
+    fees: 'Fees', hostel: 'Hostel', attendance: 'Attendance', team: 'Team & presence', about: 'About',
+    settings: 'Settings', notifications: 'Notifications', approvals: 'Approvals', users: 'Users',
+    academics: 'Academics', marks: 'Marks studio', finance: 'Finance', announcements: 'Announcements',
+    campuses: 'Campuses', payments: 'Payments', quality: 'Service quality',
+    checkin: 'Check-in desk', feesdesk: 'Fees desk',
+    timetable: 'Timetable & exams', documents: 'Document vault'
+  };
+  return titles[route] || 'Portal';
+}
+
+function bottomNav(role) {
+  const home = { route: 'home', label: 'Home', icon: 'home' };
+  const sets = {
+    owner: [{ route: 'settings', label: 'App settings', icon: 'settings' }],
+    student: [
+      home,
+      { route: 'units', label: 'Units', icon: 'book' },
+      { route: 'attendance', label: 'Attendance', icon: 'check' },
+      { route: 'results', label: 'Results', icon: 'chart' }
+    ],
+    lecturer: [
+      home,
+      { route: 'units', label: 'My units', icon: 'book' },
+      { route: 'attendance', label: 'Attendance', icon: 'check' },
+      { route: 'assignments', label: 'Assignments', icon: 'clipboard' }
+    ],
+    director: [
+      home,
+      { route: 'campuses', label: 'Campuses', icon: 'academics' },
+      { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+      { route: 'users', label: 'Users', icon: 'users' }
+    ],
+    deputy_director: [
+      home,
+      { route: 'campuses', label: 'Campuses', icon: 'academics' },
+      { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+      { route: 'users', label: 'Users', icon: 'users' }
+    ],
+    general_admin: [
+      home,
+      { route: 'campuses', label: 'Campuses', icon: 'academics' },
+      { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+      { route: 'users', label: 'Users', icon: 'users' }
+    ],
+    principal: [
+      home,
+      { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+      { route: 'users', label: 'Users', icon: 'users' },
+      { route: 'announcements', label: 'Notices', icon: 'megaphone' }
+    ],
+    campus_admin: [
+      home,
+      { route: 'approvals', label: 'Approvals', icon: 'approvals' },
+      { route: 'users', label: 'Users', icon: 'users' },
+      { route: 'payments', label: 'Payments', icon: 'wallet' },
+      { route: 'feesdesk', label: 'Fees desk', icon: 'finance' }
+    ],
+    registrar: [
+      home,
+      { route: 'academics', label: 'Academics', icon: 'academics' },
+      { route: 'announcements', label: 'Notices', icon: 'megaphone' },
+      { route: 'team', label: 'Team', icon: 'users' }
+    ],
+    exam_officer: [
+      home,
+      { route: 'marks', label: 'Marks', icon: 'marks' },
+      { route: 'announcements', label: 'Notices', icon: 'megaphone' },
+      { route: 'team', label: 'Team', icon: 'users' }
+    ],
+    qa_officer: [
+      home,
+      { route: 'quality', label: 'Quality', icon: 'shield' },
+      { route: 'announcements', label: 'Notices', icon: 'megaphone' },
+      { route: 'team', label: 'Team', icon: 'users' }
+    ],
+    accounts_clerk: [
+      home,
+      { route: 'finance', label: 'Finance', icon: 'finance' },
+      { route: 'feesdesk', label: 'Fees desk', icon: 'wallet' },
+      { route: 'announcements', label: 'Notices', icon: 'megaphone' },
+      { route: 'team', label: 'Team', icon: 'users' }
+    ],
+    secretary: [
+      home,
+      { route: 'checkin', label: 'Check-in', icon: 'clock' },
+      { route: 'announcements', label: 'Notices', icon: 'megaphone' },
+      { route: 'team', label: 'Team', icon: 'users' },
+      { route: 'about', label: 'About', icon: 'info' }
+    ],
+    council: [
+      home,
+      { route: 'announcements', label: 'Announcements', icon: 'megaphone' },
+      { route: 'team', label: 'Team', icon: 'users' },
+      { route: 'about', label: 'About', icon: 'info' }
+    ]
+  };
+  return sets[role] || sets.student;
+}
+
+function sidebarHTML(user, route) {
+  const groups = navGroups(user.role);
+  return `<aside class="sidebar" id="sidebar">
+    <a class="side-brand" href="#/home">
+      ${logo('side-logo')}
+      <span><strong>TSMHST</strong><small>Tricent Portal</small></span>
+    </a>
+    <div class="side-term"><span>${esc(I18N.t('Current term'))}</span><strong>${esc(DB.data.meta.termLabel)}</strong></div>
+    <nav class="side-nav">
+      ${groups.map(g => `<div class="nav-group"><span class="nav-group-label">${esc(g.label)}</span>
+        ${g.items.map(item => `<a class="side-link ${route === item.route ? 'active' : ''}" href="#/${item.route}" ${route === item.route ? 'aria-current="page"' : ''}>${icon(item.icon)}<span>${esc(I18N.t(item.label))}</span></a>`).join('')}
+      </div>`).join('')}
+    </nav>
+    <div class="side-user">
+      ${avatar(user)}
+      <div class="side-user-copy"><strong>${esc(user.name)}</strong><span>${esc(roleLabel(user.role))}</span></div>
+      <button type="button" class="icon-btn" data-action="logout" title="${esc(I18N.t('Sign out'))}">${icon('logout')}</button>
+    </div>
+  </aside>
+  <div class="drawer-backdrop" data-action="toggle-sidebar"></div>`;
+}
+
+function moreSheetHTML(user, route) {
+  const items = navGroups(user.role).flatMap(g => g.items);
+  if (!items.some(i => i.route === 'notifications')) items.push({ route: 'notifications', label: 'Notifications', icon: 'bell' });
+  return `<div class="sheet-backdrop" data-action="close-more"></div>
+  <div class="more-sheet" id="more-sheet" aria-hidden="true">
+    <div class="sheet-grip"></div>
+    <div class="sheet-head">
+      <div><span class="eyebrow">${esc(roleLabel(user.role))}</span><h2>${esc(I18N.t('More'))}</h2></div>
+      <button type="button" class="icon-btn" data-action="close-more" aria-label="${esc(I18N.t('Close'))}">${icon('x')}</button>
+    </div>
+    <div class="more-grid">
+      ${items.map(item => `<a class="more-tile ${route === item.route ? 'active' : ''}" href="#/${item.route}" ${route === item.route ? 'aria-current="page"' : ''}>${icon(item.icon)}<span>${esc(I18N.t(item.label))}</span></a>`).join('')}
+    </div>
+    <div class="more-actions">
+      <button type="button" class="btn btn-ghost" data-action="install-app">${icon('download')} ${esc(I18N.t('Install app'))}</button>
+      <a class="btn btn-ghost" href="#/notifications">${icon('bell')} ${esc(I18N.t('Notifications'))}</a>
+      <button type="button" class="btn btn-danger-ghost" data-action="logout">${icon('logout')} ${esc(I18N.t('Sign out'))}</button>
+    </div>
+  </div>`;
+}
+
+function portalShell(user, route, content) {
+  const unread = DB.unreadCount(user);
+  const offline = !navigator.onLine;
+  const title = I18N.t(routeTitle(route));
+  const bottom = bottomNav(user.role);
+  const now = new Date().toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+  return `<div class="app-shell">
+    ${sidebarHTML(user, route)}
+    <div class="app-main">
+      <header class="topbar">
+        <button type="button" class="icon-btn mobile-only" data-action="toggle-sidebar" aria-label="Open menu">${icon('menu')}</button>
+        <div class="topbar-title"><h2>${esc(title)}</h2><span>${esc(now)}</span></div>
+        <div class="topbar-actions">
+          ${offline ? `<span class="offline-pill">${icon('wifiOff')} Offline</span>` : ''}
+          <button type="button" class="icon-btn" data-action="install-app" title="${esc(I18N.t('Install app'))}">${icon('download')}</button>
+          <a class="icon-btn bell-btn" href="#/notifications" aria-label="${esc(I18N.t('Notifications'))}">${icon('bell')}${unread ? `<span class="bell-count">${unread > 9 ? '9+' : unread}</span>` : ''}</a>
+          <a class="top-avatar" href="#/settings" aria-label="${esc(I18N.t('Settings'))}">${avatar(user)}</a>
+        </div>
+      </header>
+      <main class="page" id="page-content">${content}</main>
+    </div>
+    <nav class="bottom-nav" aria-label="Primary navigation">
+      ${bottom.map(item => `<a class="bottom-link ${route === item.route ? 'active' : ''}" href="#/${item.route}" ${route === item.route ? 'aria-current="page"' : ''}>${icon(item.icon)}<span>${esc(I18N.t(item.label))}</span></a>`).join('')}
+      <button type="button" class="bottom-link ${bottom.every(i => i.route !== route) ? 'active' : ''}" data-action="open-more" aria-expanded="false" aria-controls="more-sheet">${icon('menu')}<span>${esc(I18N.t('More'))}</span></button>
+    </nav>
+    ${moreSheetHTML(user, route)}
+  </div>`;
+}
+
+/* ---------------- Authentication ---------------- */
+
+function authPage() {
+  return `<div class="auth-shell">
+    <section class="auth-hero">
+      <div class="auth-brand">${logo('auth-logo')}<div><strong>Tricent School of<br>Medical Health Science &amp; Technology</strong><span>TSMHST · ${esc(APP.domain)}</span></div></div>
+      <div class="auth-hero-copy">
+        <span class="eyebrow light">Student & staff portal</span>
+        <h1>Your campus,<br><em>in your pocket.</em></h1>
+        <p>${esc(CONTENT.purpose)}</p>
+        <div class="auth-features">
+          <span>${icon('book')} Units & results</span>
+          <span>${icon('wallet')} Fees & hostel</span>
+          <span>${icon('check')} Class sign-in</span>
+          <span>${icon('bell')} Live notices</span>
+        </div>
+      </div>
+      <div class="auth-hero-foot">
+        <div><strong>Need help?</strong><br><a href="mailto:${APP.supportEmail}">${APP.supportEmail}</a></div>
+        <div><strong>WhatsApp</strong><br><a href="https://wa.me/254118000614" target="_blank" rel="noopener">${APP.supportPhoneDisplay}</a></div>
+        <div><strong>College</strong><br><a href="mailto:${APP.officeEmail}">${APP.officeEmail}</a> · <a href="tel:${APP.officePhoneTel}">${APP.officePhoneDisplay}</a> · <a href="${APP.websiteUrl}" target="_blank" rel="noopener">${APP.domain}</a></div>
+      </div>
+    </section>
+
+    <section class="auth-panel">
+      <div class="auth-card">
+        <div class="auth-card-head">
+          <span class="eyebrow">TSMHST Portal</span>
+          <h2 id="auth-title">${esc(I18N.t('Welcome back'))}</h2>
+          <p id="auth-sub">${esc(I18N.t('Sign in to continue'))}</p>
+        </div>
+        <div class="segmented auth-tabs three" role="tablist">
+          <button type="button" class="segment active" data-action="auth-tab" data-tab="signin" role="tab" aria-selected="true">${esc(I18N.t('Sign in'))}</button>
+          <button type="button" class="segment" data-action="auth-tab" data-tab="register" role="tab" aria-selected="false">${esc(I18N.t('Register'))}</button>
+          <button type="button" class="segment" data-action="auth-tab" data-tab="executive" role="tab" aria-selected="false">Executive</button>
+        </div>
+        <div id="auth-alert" class="form-alert" hidden></div>
+
+        <form data-form="signin" id="signin-form" class="auth-form">
+          <label class="field"><span>${esc(I18N.t('Email') || 'Email')} / ${esc(I18N.t('Admission number'))} / ${esc(I18N.t('Staff number'))}</span>
+            <input name="identifier" id="signin-identifier" autocomplete="username" placeholder="e.g. TSMHST/CH/2026/001" required>
+          </label>
+          <label class="field"><span>${esc(I18N.t('Password'))}</span>
+            <span class="password-wrap"><input name="password" id="signin-password" type="password" autocomplete="current-password" placeholder="••••••••" required>
+              <button type="button" class="ghost-icon" data-action="toggle-password" data-target="signin-password" aria-label="Show password">${icon('eye')}</button>
+            </span>
+          </label>
+          <div class="auth-row"><label class="checkline"><input type="checkbox" checked> <span>Keep me signed in</span></label><button type="button" class="link-btn" data-action="show-terms">${esc(I18N.t('Terms of use'))}</button></div>
+          <button type="submit" class="btn btn-primary btn-block">${esc(I18N.t('Sign in'))} ${icon('arrow')}</button>
+        </form>
+
+        <form data-form="register" id="register-form" class="auth-form" hidden>
+          <div class="radio-cards three" data-reg-role-group>
+            <label class="radio-card active"><input type="radio" name="role" value="student" checked><span>${icon('graduation')}<strong>${esc(I18N.t('Student'))}</strong><small>Units, results & fees</small></span></label>
+            <label class="radio-card"><input type="radio" name="role" value="lecturer"><span>${icon('user')}<strong>${esc(I18N.t('Lecturer'))}</strong><small>Teach, mark & attendance</small></span></label>
+            <label class="radio-card"><input type="radio" name="role" value="admin"><span>${icon('shield')}<strong>College admin</strong><small>Registry, exams, finance</small></span></label>
+          </div>
+          <div class="form-grid two">
+            <label class="field"><span>${esc(I18N.t('Full name'))}</span><input name="name" required placeholder="e.g. Jane Wanjiku"></label>
+            <label class="field"><span>${esc(I18N.t('Email'))}</span><input name="email" type="email" required placeholder="you@example.com"></label>
+            <label class="field"><span>${esc(I18N.t('Phone number'))}</span><input name="phone" type="tel" placeholder="+254 7xx xxx xxx"></label>
+            <label class="field"><span>${esc(I18N.t('Password'))}</span><input name="password" type="password" minlength="6" required placeholder="At least 6 characters"></label>
+          </div>
+          <div class="reg-student-fields">
+            <div class="form-grid two">
+              <label class="field"><span>${esc(I18N.t('Admission number'))}</span><input name="admissionNo" placeholder="TSMHST/CH/2026/013"></label>
+              <label class="field"><span>${esc(I18N.t('Programme'))}</span><select name="programme">${DEPARTMENTS.map(d => {
+                const list = PORTAL_PROGRAMMES.filter(p => p.dept === d);
+                return list.length ? `<optgroup label="${esc(d)}">${list.map(p => `<option value="${p.code}">${esc(p.name)}</option>`).join('')}</optgroup>` : '';
+              }).join('')}</select></label>
+              <label class="field"><span>${esc(I18N.t('Semester'))}</span><select name="semester">${[1, 2, 3, 4, 5, 6, 7, 8, 9].map(n => `<option value="${n}">Semester ${n}</option>`).join('')}</select></label>
+              <label class="field"><span>${esc(I18N.t('Campus'))}</span><select name="campus">${CAMPUSES.map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
+            </div>
+            <p class="form-note">Tricent runs three semesters per academic year — choose your current semester from 1 to 9.</p>
+          </div>
+          <div class="reg-lecturer-fields" hidden>
+            <div class="form-grid two">
+              <label class="field"><span>${esc(I18N.t('Staff number'))}</span><input name="staffNo" placeholder="TSM/LEC/004"></label>
+              <label class="field"><span>${esc(I18N.t('Campus'))}</span><select name="staffCampus">${CAMPUSES.map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
+              <label class="field form-span"><span>${esc(I18N.t('Department'))}</span><select name="department">${DEPARTMENTS.map(d => `<option>${esc(d)}</option>`).join('')}</select></label>
+            </div>
+            <p class="form-note">Approved by the College Principal of your campus.</p>
+          </div>
+          <div class="reg-admin-fields" hidden>
+            <div class="form-grid two">
+              <label class="field form-span"><span>Administrative role</span><select name="adminRole">${ADMIN_ROLE_OPTIONS.map(r => `<option value="${r.code}">${esc(r.label)}</option>`).join('')}</select></label>
+              <label class="field"><span>${esc(I18N.t('Staff number'))}</span><input name="staffNo" placeholder="TSM/ADM/004"></label>
+              <label class="field"><span>${esc(I18N.t('Campus'))}</span><select name="staffCampus">${CAMPUSES.map(c => `<option>${esc(c)}</option>`).join('')}</select></label>
+            </div>
+            <p class="form-note">College admin accounts are approved by the Principal of the selected campus before first sign-in.</p>
+          </div>
+          <label class="field"><span>${esc(I18N.t('Confirm password'))}</span><input name="confirmPassword" type="password" minlength="6" required></label>
+          <label class="checkline terms-line"><input type="checkbox" name="terms" required> <span>I agree to the ${''}<button type="button" class="link-btn inline" data-action="show-terms">${esc(I18N.t('Terms of use'))}</button></span></label>
+          <button type="submit" class="btn btn-primary btn-block">${esc(I18N.t('Create account'))} ${icon('arrow')}</button>
+          <p class="form-note">${esc(I18N.t('Awaiting approval'))}: accounts are reviewed by the approving office before first sign-in.</p>
+        </form>
+
+        <form data-form="register" id="executive-form" class="auth-form" hidden>
+          <div class="form-alert info">Directorate registration oversees activities across <strong>all campuses</strong>. These accounts are approved by the System Owner.</div>
+          <div class="form-grid two">
+            <label class="field form-span"><span>Directorate role</span><select name="adminRole">${EXEC_ROLE_OPTIONS.map(r => `<option value="${r.code}">${esc(r.label)}</option>`).join('')}</select></label>
+            <label class="field"><span>${esc(I18N.t('Full name'))}</span><input name="name" required placeholder="e.g. Dr. Joseph Mwangi"></label>
+            <label class="field"><span>${esc(I18N.t('Email'))}</span><input name="email" type="email" required placeholder="director@example.com"></label>
+            <label class="field"><span>${esc(I18N.t('Phone number'))}</span><input name="phone" type="tel" placeholder="+254 7xx xxx xxx"></label>
+            <label class="field"><span>${esc(I18N.t('Staff number'))}</span><input name="staffNo" placeholder="TSM/EXEC/004"></label>
+            <label class="field"><span>${esc(I18N.t('Password'))}</span><input name="password" type="password" minlength="6" required placeholder="At least 6 characters"></label>
+            <label class="field"><span>${esc(I18N.t('Confirm password'))}</span><input name="confirmPassword" type="password" minlength="6" required></label>
+          </div>
+          <p class="form-note">Scope: all campuses · ${CAMPUSES.length} campuses under directorate oversight.</p>
+          <label class="checkline terms-line"><input type="checkbox" name="terms" required> <span>I agree to the ${''}<button type="button" class="link-btn inline" data-action="show-terms">${esc(I18N.t('Terms of use'))}</button></span></label>
+          <button type="submit" class="btn btn-primary btn-block">${esc(I18N.t('Create account'))} ${icon('arrow')}</button>
+        </form>
+
+        <div class="demo-box">
+          <div class="demo-head"><strong>${esc(I18N.t('Demo accounts'))}</strong><span>Tap to fill</span></div>
+          <div class="demo-grid">${DEMO_ACCOUNTS.map((d, i) => `<button type="button" class="demo-chip" data-action="demo-fill" data-demo="${i}"><span>${esc(d.label)}</span><code>${esc(d.identifier)}</code></button>`).join('')}</div>
+        </div>
+        <div class="auth-footer">
+          <button type="button" class="link-btn" data-action="public-about">${icon('info')} About Tricent &amp; the portal</button>
+          <span>v${APP.version}</span>
+        </div>
+      </div>
+      <p class="auth-legal">© ${new Date().getFullYear()} ${esc(APP.school)}. All rights reserved. · <button type="button" class="link-btn" data-action="show-terms">Terms of use</button></p>
+    </section>
+  </div>`;
+}
+
+/* ---------------- Page dispatch ---------------- */
+
+function renderPage(user, route) {
+  if (route === 'home') return renderHome(user);
+  if (route === 'units') return renderUnits(user);
+  if (route === 'assignments') return renderAssignments(user);
+  if (route === 'results') return renderResults(user);
+  if (route === 'transcript') return renderTranscript(user);
+  if (route === 'attendance') return renderAttendance(user);
+  if (route === 'timetable') return renderTimetable(user);
+  if (route === 'fees') return renderFees(user);
+  if (route === 'hostel') return renderHostel(user);
+  if (route === 'documents') return renderDocuments(user);
+  if (route === 'team') return renderTeam(user);
+  if (route === 'notifications') return renderNotifications(user);
+  if (route === 'about') return renderAbout(user);
+  if (route === 'settings') return renderSettings(user);
+  if (route === 'marks') return renderMarks(user);
+  if (route === 'academics') return renderAcademics(user);
+  if (route === 'approvals') return renderApprovals(user);
+  if (route === 'users') return renderUsers(user);
+  if (route === 'checkin') return renderCheckin(user);
+  if (route === 'finance') return renderFinance(user);
+  if (route === 'feesdesk') return renderFeesDesk(user);
+  if (route === 'payments') return renderPayments(user);
+  if (route === 'campuses') return renderCampuses(user);
+  if (route === 'quality') return renderQuality(user);
+  if (route === 'announcements') return renderAnnouncements(user);
+  return renderHome(user);
+}
+
+function renderPortal(user, route) {
+  return portalShell(user, route, renderPage(user, route));
+}
+
+/* ---------------- Home ---------------- */
+
+function greeting() {
+  const h = new Date().getHours();
+  return h < 12 ? 'Good morning' : h < 17 ? 'Good afternoon' : 'Good evening';
+}
+
+function announcementList(user, limit) {
+  const items = DB.noticesFor(user).filter(n => n.type === 'announcement').slice(0, limit || 3);
+  if (!items.length) return emptyState('megaphone', 'No announcements', 'New notices from the administration and student council will appear here.');
+  return `<div class="notice-list">${items.map(n => `<a class="notice-item" href="#/notifications">
+    <span class="notice-icon">${icon('megaphone')}</span>
+    <span class="notice-copy"><strong>${esc(n.title)}</strong><small>${esc(fmtDate(n.createdAt))} · ${esc(n.audience === 'all' ? 'Everyone' : n.audience === 'students' ? 'Students' : 'Staff')}</small></span>
+    ${n.pinned ? `<span class="pin-badge">${icon('pin')}</span>` : ''}
+  </a>`).join('')}</div>`;
+}
+
+function leadershipCard(user) {
+  const leaders = DB.team().filter(m => isAdminRole(m.role) || m.role === 'council');
+  const online = leaders.filter(m => m.presence.online).length;
+  return `<div class="card">
+    <div class="card-head"><div><h2>${esc(I18N.t('Portal team'))}</h2><p class="card-sub">${esc(I18N.t('Presence shows who is signed in right now.'))}</p></div><a class="card-link" href="#/team">${esc(I18N.t('View all'))} ${icon('chevron')}</a></div>
+    <div class="presence-strip">${leaders.map(m => `<div class="presence-person" title="${esc(m.name)} — ${m.presence.online ? 'Online' : 'Offline'}">${avatar(m)}<span class="presence-dot ${m.presence.online ? 'on' : ''}"></span><span class="presence-name">${esc(m.name.split(' ')[0])}</span></div>`).join('')}</div>
+    <div class="presence-note"><span class="live-dot"></span>${online} ${esc(I18N.t('Online now'))} · ${leaders.length - online} ${esc(I18N.t('Offline'))}</div>
+  </div>`;
+}
+
+function todayClasses(user, units) {
+  const today = DAYS_SHORT[new Date().getDay()];
+  const ordered = units.slice().sort((a, b) => ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].indexOf(a.day) - ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'].indexOf(b.day));
+  return `<div class="card">
+    <div class="card-head"><div><h2>${esc(I18N.t("Today's classes"))}</h2><p class="card-sub">${today === 'Sun' || today === 'Sat' ? 'Weekend — no scheduled classes' : 'Your weekly timetable'}</p></div><a class="card-link" href="#/timetable">${esc(I18N.t('Full timetable'))}</a></div>
+    ${ordered.length ? `<div class="class-list">${ordered.map(u => {
+      const isToday = u.day === today;
+      return `<div class="class-row ${isToday ? 'today' : ''}">
+        <span class="class-day">${esc(u.day)}<small>${isToday ? 'Today' : ''}</small></span>
+        <span class="class-main"><strong>${esc(u.code)} · ${esc(u.title)}</strong><small>${esc(u.time)} · ${esc(u.room)} · ${esc(u.day === today ? 'On campus' : 'Scheduled')}</small></span>
+        <span class="chip chip-soft">${esc(u.time.split(' - ')[0])}</span>
+      </div>`;
+    }).join('')}</div>` : emptyState('book', 'No units registered', 'Register your units to see your class timetable.', `<a class="btn btn-primary btn-sm" href="#/units">${esc(I18N.t('Register units'))}</a>`)}
+  </div>`;
+}
+
+function renderHome(user) {
+  if (user.role === 'council') return renderCouncilHome(user);
+  if (user.role === 'lecturer') return renderLecturerHome(user);
+  if (isAdminRole(user.role)) return renderOfficeHome(user);
+
+  const regs = DB.registrationsFor(user.id, DB.data.meta.termCode);
+  const units = regs.map(r => DB.unit(r.unitCode)).filter(Boolean);
+  const attendance = DB.overallAttendance(user.id);
+  const fees = DB.feeSummary(user.id);
+  const marks = DB.marksForStudent(user.id, true);
+  const gpa = DB.gpa(marks);
+  const assignments = DB.assignmentsForStudent(user.id);
+  const due = assignments.filter(a => { const sub = DB.submissionFor(a.id, user.id); return !sub && new Date(a.dueAt).getTime() > Date.now(); });
+  const firstName = user.name.split(' ')[0];
+  const term = DB.data.meta.termLabel;
+  const deadline = DB.data.meta.registrationDeadline ? fmtDate(DB.data.meta.registrationDeadline) : '';
+  const chk = DB.checkinStatus();
+  const myChk = DB.checkinFor(user.id, chk.date);
+
+  const dueList = assignments
+    .filter(a => !DB.submissionFor(a.id, user.id))
+    .sort((a, b) => new Date(a.dueAt) - new Date(b.dueAt)).slice(0, 3);
+
+  return `${pageHead(`${greeting()}, ${firstName}`, `${esc(user.admissionNo)} · ${esc(programmeFor(user.programme).name)} · Semester ${esc(user.semester || (Number(user.year) || 1) * 3 - 2)}`,
+    `<a class="btn btn-primary btn-sm" href="#/attendance">${icon('check')} ${esc(I18N.t('Sign attendance'))}</a>`)}
+  <div class="hero-card student-hero">
+    <div class="hero-copy">
+      <span class="eyebrow light">${esc(I18N.t('Current term'))}</span>
+      <h2>${esc(term)}</h2>
+      <p>${DB.data.meta.registrationOpen ? 'Unit registration is open' : 'Unit registration is closed'}${deadline ? ` · closes ${esc(deadline)}` : ''}</p>
+      <div class="hero-actions">
+        <a class="btn btn-light btn-sm" href="#/units">${icon('book')} ${esc(I18N.t('Current units'))} <strong>${units.length}</strong></a>
+        <a class="btn btn-outline-light btn-sm" href="#/results">${icon('chart')} ${esc(I18N.t('View results'))}</a>
+      </div>
+    </div>
+    <div class="hero-metric"><span>${esc(I18N.t('Your attendance'))}</span><strong>${attendance.percent}%</strong>${progress(attendance.percent)}<small>${attendance.attended} of ${attendance.held} sessions</small></div>
+  </div>
+  ${fees.balance > 0 ? `<div class="alert-strip warn">${icon('alert')}<span>Fee balance: <strong>${money(fees.balance)}</strong>${fees.pending ? ` · ${money(fees.pending)} pending verification` : ''}</span><a href="#/fees">${esc(I18N.t('Pay now'))}</a></div>` : ''}
+  <div class="card">
+    <div class="card-head"><div><h2>Daily check-in</h2><p class="card-sub">Recorded by the secretary at the college gate · read-only</p></div>${icon('clock')}</div>
+    ${myChk && myChk.checkInAt && myChk.checkOutAt ? `<div class="inline-success">${icon('checkCircle')} Checked in at ${esc(fmtTime(myChk.checkInAt))} and checked out at ${esc(fmtTime(myChk.checkOutAt))}.</div>`
+      : myChk && myChk.checkInAt ? `<div class="alert-strip info">${icon('check')}<span>Checked in at <strong>${esc(fmtTime(myChk.checkInAt))}</strong>${myChk.late ? ' · marked late' : ''}. Not checked out yet.</span></div>`
+      : `<div class="alert-strip info">${icon('clock')}<span>Not checked in today. The secretary checks you in at the gate (${esc(hmLabel(chk.windows.inStart))} – ${esc(hmLabel(chk.windows.inEnd))}).</span></div>`}
+    ${(() => { const hist = DB.checkinsOf(user.id, 7); return hist.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Check-in</th><th>Check-out</th><th>Method</th></tr></thead><tbody>${hist.map(c => `<tr><td>${esc(c.date)}</td><td>${c.checkInAt ? esc(fmtTime(c.checkInAt)) + (c.late ? ' <span class="muted-text">(late)</span>' : '') : '—'}</td><td>${c.checkOutAt ? esc(fmtTime(c.checkOutAt)) : '—'}</td><td>${esc(c.inMethod === 'biometric' ? 'Fingerprint' : c.inMethod === 'desk' ? 'Secretary desk' : c.inMethod || '—')}</td></tr>`).join('')}</tbody></table></div>` : ''; })()}
+  </div>
+  <div class="stats-grid">
+    ${statCard(I18N.t('Your attendance'), attendance.percent + '%', `${attendance.attended}/${attendance.held} sessions`, 'check', 'green')}
+    ${statCard(I18N.t('Fee balance'), money(fees.balance), fees.pending ? money(fees.pending) + ' pending' : 'No pending payments', 'wallet', fees.balance > 0 ? 'amber' : '')}
+    ${statCard(I18N.t('GPA'), gpa === null ? '—' : gpa.toFixed(2), marks.length + ' published results', 'chart', 'maroon')}
+    ${statCard(I18N.t('Due assignments'), String(due.length), due.length ? 'Needs your attention' : 'All caught up', 'clipboard', due.length ? 'amber' : '')}
+  </div>
+  <div class="quick-actions">
+    <a class="quick-action" href="#/units">${icon('book')}<span>${esc(I18N.t('Register units'))}</span></a>
+    <a class="quick-action" href="#/attendance">${icon('check')}<span>${esc(I18N.t('Sign attendance'))}</span></a>
+    <a class="quick-action" href="#/fees">${icon('wallet')}<span>${esc(I18N.t('Pay fees'))}</span></a>
+    <a class="quick-action" href="#/transcript">${icon('file')}<span>${esc(I18N.t('Transcript'))}</span></a>
+  </div>
+  <div class="dash-grid">
+    ${todayClasses(user, units)}
+    <div class="card">
+      <div class="card-head"><div><h2>${esc(I18N.t('Announcements'))}</h2><p class="card-sub">From administration & student council</p></div><a class="card-link" href="#/notifications">${esc(I18N.t('View all'))}</a></div>
+      ${announcementList(user, 2)}
+    </div>
+  </div>
+  <div class="dash-grid">
+    <div class="card">
+      <div class="card-head"><div><h2>${esc(I18N.t('Due assignments'))}</h2><p class="card-sub">Work that still needs your attention</p></div><a class="card-link" href="#/assignments">${esc(I18N.t('View all'))}</a></div>
+      ${dueList.length ? `<div class="task-list">${dueList.map(a => {
+        const info = dueInfo(a.dueAt);
+        return `<a class="task-row" href="#/assignments"><span class="task-icon">${icon('clipboard')}</span><span class="task-copy"><strong>${esc(a.title)}</strong><small>${esc(a.unitCode)} · ${esc(info.label)}</small></span>${statusBadge(info.overdue ? 'overdue' : 'due')}</a>`;
+      }).join('')}</div>` : `<div class="inline-success">${icon('checkCircle')} You have no outstanding assignments.</div>`}
+    </div>
+    ${leadershipCard(user)}
+  </div>
+  <div class="dash-grid">
+    <div class="card">
+      <div class="card-head"><div><h2>${esc(I18N.t('Recent results'))}</h2><p class="card-sub">Latest published marks</p></div><a class="card-link" href="#/results">${esc(I18N.t('View all'))}</a></div>
+      ${marks.length ? `<div class="mini-results">${marks.slice(0, 4).map(m => { const u = DB.unit(m.unitCode); return `<div class="mini-result"><span><strong>${esc(m.unitCode)}</strong><small>${esc(u ? u.title : '')}</small></span><span class="grade-pill grade-${m.grade}">${m.grade}</span><strong>${m.total}%</strong></div>`; }).join('')}</div>` : emptyState('chart', 'No published results', 'Results will appear here when your lecturers publish them.')}
+    </div>
+    <div class="card">
+      <div class="card-head"><div><h2>${esc(I18N.t('Student portal'))}</h2><p class="card-sub">Quick help</p></div>${icon('help')}</div>
+      <p class="muted-text">Use Settings to change theme, font size and language, manage notifications and permissions, rate the app or contact support.</p>
+      <div class="inline-actions"><a class="btn btn-ghost btn-sm" href="#/settings">${icon('settings')} ${esc(I18N.t('Settings'))}</a><button type="button" class="btn btn-ghost btn-sm" data-action="public-about">${icon('info')} ${esc(I18N.t('About'))}</button></div>
+    </div>
+  </div>`;
+}
+
+function renderLecturerHome(user) {
+  const myUnits = DB.unitsForLecturer(user.id);
+  const studentSet = new Set();
+  myUnits.forEach(u => DB.studentsForUnit(u.code).forEach(s => studentSet.add(s.id)));
+  const assignments = DB.assignmentsForStaff(user);
+  let pending = 0;
+  assignments.forEach(a => { pending += DB.submissionsFor(a.id).filter(s => s.score === null).length; });
+  const openSessions = DB.data.sessions.filter(s => s.status === 'open' && myUnits.some(u => u.code === s.unitCode));
+  const recentSubs = [];
+  assignments.forEach(a => DB.submissionsFor(a.id).filter(s => s.score === null).slice(0, 1).forEach(s => recentSubs.push({ a, s })));
+  return `${pageHead(`${greeting()}, ${user.name.split(' ')[0]}`, `${esc(user.title)}`, `<button type="button" class="btn btn-primary btn-sm" data-action="new-assignment">${icon('plus')} ${esc(I18N.t('New assignment'))}</button>`)}
+  <div class="hero-card staff-hero">
+    <div class="hero-copy">
+      <span class="eyebrow light">Teaching desk</span>
+      <h2>${esc(DB.data.meta.termLabel)}</h2>
+      <p>${myUnits.length} units · ${studentSet.size} students · ${openSessions.length} open attendance session${openSessions.length === 1 ? '' : 's'}</p>
+      <div class="hero-actions"><a class="btn btn-light btn-sm" href="#/attendance">${icon('check')} ${esc(I18N.t('Open session'))}</a><a class="btn btn-outline-light btn-sm" href="#/marks">${icon('marks')} ${esc(I18N.t('Marks studio'))}</a></div>
+    </div>
+    <div class="hero-metric"><span>To be graded</span><strong>${pending}</strong><small>submissions awaiting feedback</small></div>
+  </div>
+  <div class="stats-grid">
+    ${statCard(I18N.t('My units'), String(myUnits.length), DB.data.meta.termLabel, 'book', 'green')}
+    ${statCard('Students', String(studentSet.size), 'across your classes', 'users', '')}
+    ${statCard('Submissions to grade', String(pending), pending ? 'Open Assignments to grade' : 'All graded', 'clipboard', pending ? 'amber' : '')}
+    ${statCard(I18N.t('Open sessions'), String(openSessions.length), openSessions.length ? 'Sign-in is live' : 'No active sessions', 'check', 'maroon')}
+  </div>
+  <div class="dash-grid">
+    ${todayClasses(user, myUnits)}
+    <div class="card">
+      <div class="card-head"><div><h2>Teaching shortcuts</h2><p class="card-sub">Common tasks</p></div></div>
+      <div class="stack-actions">
+        <button type="button" class="list-action" data-action="new-assignment">${icon('plus')}<span><strong>Create assignment</strong><small>Set work for one of your units</small></span>${icon('chevron')}</button>
+        <a class="list-action" href="#/attendance">${icon('check')}<span><strong>Take attendance</strong><small>Open a code-based sign-in session</small></span>${icon('chevron')}</a>
+        <a class="list-action" href="#/marks">${icon('marks')}<span><strong>Enter or randomise marks</strong><small>Work per unit and admission number</small></span>${icon('chevron')}</a>
+        <a class="list-action" href="#/assignments">${icon('clipboard')}<span><strong>Grade submissions</strong><small>View student work and give feedback</small></span>${icon('chevron')}</a>
+      </div>
+    </div>
+  </div>
+  <div class="dash-grid">
+    <div class="card">
+      <div class="card-head"><div><h2>Submissions to grade</h2><p class="card-sub">Latest student work</p></div><a class="card-link" href="#/assignments">${esc(I18N.t('View all'))}</a></div>
+      ${recentSubs.length ? `<div class="task-list">${recentSubs.slice(0, 5).map(({ a, s }) => { const st = DB.user(s.studentId); return `<button type="button" class="task-row task-button" data-action="assignment-open" data-id="${a.id}"><span class="avatar avatar-student sm">${esc(initials(st ? st.name : '?'))}</span><span class="task-copy"><strong>${esc(st ? st.name : 'Student')}</strong><small>${esc(a.title)} · ${esc(a.unitCode)}</small></span><span class="chip chip-soft">${icon('chevron')}</span></button>`; }).join('')}</div>` : `<div class="inline-success">${icon('checkCircle')} No submissions are waiting for a grade.</div>`}
+    </div>
+    ${leadershipCard(user)}
+  </div>`;
+}
+
+function renderCouncilHome(user) {
+  const students = DB.data.users.filter(u => u.role === 'student' && u.status === 'active');
+  const leaders = DB.team();
+  const online = leaders.filter(m => m.presence.online).length;
+  const mine = DB.data.notices.filter(n => n.createdBy === user.id && n.type === 'announcement');
+  return `${pageHead(`${greeting()}, ${user.name.split(' ')[0]}`, `${esc(user.title)}`,
+    `<button type="button" class="btn btn-primary btn-sm" data-action="new-announcement">${icon('megaphone')} ${esc(I18N.t('Create announcement'))}</button>`)}
+  <div class="hero-card council-hero">
+    <div class="hero-copy">
+      <span class="eyebrow light">Student Council desk</span>
+      <h2>Represent. Communicate. Support.</h2>
+      <p>You can publish announcements for students and see live presence of administrators and fellow council members.</p>
+      <div class="hero-actions"><a class="btn btn-light btn-sm" href="#/announcements">${icon('megaphone')} Council announcements</a><a class="btn btn-outline-light btn-sm" href="#/team">${icon('users')} Team & presence</a></div>
+    </div>
+    <div class="hero-metric"><span>Students</span><strong>${students.length}</strong><small>active on the portal</small></div>
+  </div>
+  <div class="stats-grid">
+    ${statCard('Active students', String(students.length), 'All campuses', 'graduation', 'green')}
+    ${statCard('Council notices', String(mine.length), 'Posted by you', 'megaphone', 'maroon')}
+    ${statCard('Online now', String(online), 'Staff & council', 'users', '')}
+    ${statCard(I18N.t('Current term'), DB.data.meta.termLabel.split(' – ')[0], DB.data.meta.academicYear, 'calendar', 'amber')}
+  </div>
+  <div class="dash-grid">
+    <div class="card">
+      <div class="card-head"><div><h2>${esc(I18N.t('Announcements'))}</h2><p class="card-sub">Latest from administration & council</p></div><a class="card-link" href="#/announcements">${esc(I18N.t('View all'))}</a></div>
+      ${announcementList(user, 4)}
+    </div>
+    ${leadershipCard(user)}
+  </div>
+  <div class="dash-grid">
+    <div class="card"><div class="card-head"><div><h2>Council desk</h2><p class="card-sub">What you can do</p></div></div>
+      <div class="stack-actions">
+        <button type="button" class="list-action" data-action="new-announcement">${icon('megaphone')}<span><strong>Publish an announcement</strong><small>Reach all students or everyone</small></span>${icon('chevron')}</button>
+        <a class="list-action" href="#/team">${icon('users')}<span><strong>Team presence</strong><small>See who is online right now</small></span>${icon('chevron')}</a>
+        <a class="list-action" href="#/about">${icon('info')}<span><strong>Portal content</strong><small>Mission, objectives and programmes</small></span>${icon('chevron')}</a>
+      </div>
+    </div>
+    <div class="card"><div class="card-head"><div><h2>Student support</h2><p class="card-sub">Share these contacts</p></div></div>
+      <p class="muted-text">Students can reach portal support directly from Settings → Get help.</p>
+      <div class="contact-lines"><a href="mailto:${APP.supportEmail}">${icon('mail')} ${APP.supportEmail}</a><a href="https://wa.me/254118000614" target="_blank" rel="noopener">${icon('chat')} WhatsApp ${APP.supportPhoneDisplay}</a></div>
+    </div>
+  </div>`;
+}
+
+/* ---------------- Units ---------------- */
+
+function renderUnits(user) {
+  if (user.role === 'lecturer') return renderLecturerUnits(user);
+  if (user.role !== 'student') return renderHome(user);
+  const regs = DB.registrationsFor(user.id, DB.data.meta.termCode);
+  const registered = new Set(regs.map(r => r.unitCode));
+  const units = DB.unitsForProgramme(user.programme);
+  const attendance = DB.attendanceSummary(user.id);
+  const totalCredits = units.filter(u => registered.has(u.code)).reduce((a, b) => a + b.credits, 0);
+  const deadline = DB.data.meta.registrationDeadline;
+  const isOpen = DB.data.meta.registrationOpen;
+  return `${pageHead(I18N.t('Unit registration'), `${esc(DB.data.meta.termLabel)} · ${esc(programmeFor(user.programme).name)}`,
+    `<a class="btn btn-ghost btn-sm" href="#/results">${icon('chart')} ${esc(I18N.t('View results'))}</a>`)}
+  <div class="status-banner ${isOpen ? 'open' : 'closed'}">
+    <div class="status-banner-icon">${icon(isOpen ? 'checkCircle' : 'lock')}</div>
+    <div><strong>${isOpen ? 'Registration is open' : I18N.t('Registration is closed')}</strong><span>${isOpen ? `Register units for the current term before ${esc(fmtDate(deadline))}.` : 'The registration window is closed. Contact the academic office for changes.'}</span></div>
+    <span class="badge ${isOpen ? 'badge-success' : 'badge-neutral'}">${isOpen ? 'Open' : 'Closed'}</span>
+  </div>
+  <div class="stats-grid three">
+    ${statCard('Registered units', String(registered.size), `of ${units.length} offered`, 'book', 'green')}
+    ${statCard('Total credits', String(totalCredits), 'credit hours this term', 'academics', 'maroon')}
+    ${statCard('Registration deadline', deadline ? fmtDate(deadline) : '—', isOpen ? 'Register before this date' : 'Window closed', 'calendar', isOpen ? 'amber' : '')}
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h2>Available units</h2><p class="card-sub">Select the units you are taking this term. Core units are required for your programme.</p></div><span class="chip chip-soft">${units.length} units</span></div>
+    ${units.length ? `<div class="unit-grid">${units.map(u => {
+      const on = registered.has(u.code);
+      const att = attendance.find(a => a.unitCode === u.code);
+      const lecturer = DB.user(u.lecturer);
+      return `<article class="unit-card ${on ? 'registered' : ''}">
+        <div class="unit-top"><span class="unit-code">${esc(u.code)}</span><span class="badge ${u.type === 'Core' ? 'badge-info' : 'badge-neutral'}">${esc(u.type)}</span></div>
+        <h3>${esc(u.title)}</h3>
+        <div class="unit-meta">
+          <span>${icon('user')} ${esc(lecturer ? lecturer.name : 'Lecturer')}</span>
+          <span>${icon('clock')} ${esc(u.day)} ${esc(u.time)}</span>
+          <span>${icon('pin')} ${esc(u.room)}</span>
+          <span>${icon('academics')} ${u.credits} credits</span>
+        </div>
+        ${on && att ? `<div class="unit-attendance"><span>Attendance ${att.percent}%</span>${progress(att.percent)}</div>` : ''}
+        <div class="unit-foot">
+          ${on ? `<span class="registered-label">${icon('checkCircle')} ${esc(I18N.t('Registered'))}</span><button type="button" class="btn btn-danger-ghost btn-sm" data-action="unit-drop" data-unit="${u.code}" ${!isOpen ? 'disabled' : ''}>${esc(I18N.t('Drop'))}</button>`
+            : `<button type="button" class="btn btn-primary btn-sm" data-action="unit-register" data-unit="${u.code}" ${!isOpen ? 'disabled' : ''}>${icon('plus')} ${esc(I18N.t('Register'))}</button>`}
+        </div>
+      </article>`;
+    }).join('')}</div>` : emptyState('book', 'No units published', 'Your programme curriculum will appear here once the academic office publishes units.')}
+  </div>
+  <p class="page-note">${icon('info')} Unit changes are allowed only while registration is open. Dropping a unit removes it from attendance, assignments and current results.</p>`;
+}
+
+function renderLecturerUnits(user) {
+  const units = DB.unitsForLecturer(user.id);
+  return `${pageHead(I18N.t('My units'), 'Your teaching allocation for the current term', `<a class="btn btn-ghost btn-sm" href="#/attendance">${icon('check')} Take attendance</a>`)}
+  ${units.length ? `<div class="unit-grid wide">${units.map(u => {
+    const students = DB.studentsForUnit(u.code);
+    const marks = DB.marksForUnit(u.code, DB.data.meta.termCode);
+    return `<article class="unit-card staff-unit">
+      <div class="unit-top"><span class="unit-code">${esc(u.code)}</span><span class="badge badge-info">${esc(u.programme)}</span></div>
+      <h3>${esc(u.title)}</h3>
+      <div class="unit-meta"><span>${icon('clock')} ${esc(u.day)} ${esc(u.time)}</span><span>${icon('pin')} ${esc(u.room)}</span><span>${icon('users')} ${students.length} students</span><span>${icon('academics')} ${u.credits} credits</span></div>
+      <div class="unit-foot"><span class="muted-text">${marks.filter(m => m.published).length}/${marks.length} published</span><div class="inline-actions"><a class="btn btn-ghost btn-xs" href="#/marks" data-action="select-marks-unit" data-unit="${u.code}">${icon('marks')} Marks</a><a class="btn btn-ghost btn-xs" href="#/attendance" data-action="select-att-unit" data-unit="${u.code}">${icon('check')} Attendance</a></div></div>
+    </article>`;
+  }).join('')}</div>` : emptyState('book', 'No units assigned', 'Once the academic office allocates units to you, they will appear here.')}`;
+}
+
+/* ---------------- Assignments ---------------- */
+
+function assignmentStatus(a, sub) {
+  if (sub && sub.gradedAt) return 'graded';
+  if (sub) return 'submitted';
+  if (new Date(a.dueAt).getTime() < Date.now()) return 'overdue';
+  return 'due';
+}
+
+function renderAssignments(user) {
+  if (user.role === 'student') {
+    const assignments = DB.assignmentsForStudent(user.id);
+    const rows = assignments.map(a => {
+      const sub = DB.submissionFor(a.id, user.id);
+      return { a, sub, state: assignmentStatus(a, sub) };
+    }).sort((x, y) => new Date(x.a.dueAt) - new Date(y.a.dueAt));
+    return `${pageHead(I18N.t('Assignments'), 'Coursework set by your lecturers', `<a class="btn btn-ghost btn-sm" href="#/units">${icon('book')} ${esc(I18N.t('My units'))}</a>`)}
+    <div class="filter-row" data-asg-filters>
+      ${['all', 'due', 'submitted', 'graded', 'overdue'].map(f => `<button type="button" class="chip ${f === 'all' ? 'active' : ''}" data-action="asg-filter" data-filter="${f}">${esc(f === 'all' ? 'All' : f.charAt(0).toUpperCase() + f.slice(1))}</button>`).join('')}
+    </div>
+    ${rows.length ? `<div class="assignment-list">${rows.map(({ a, sub, state }) => {
+      const u = DB.unit(a.unitCode); const info = dueInfo(a.dueAt);
+      return `<article class="assignment-card" data-state="${state}">
+        <div class="asg-icon">${icon(state === 'graded' ? 'checkCircle' : 'clipboard')}</div>
+        <div class="asg-main">
+          <div class="asg-top"><span class="unit-code small">${esc(a.unitCode)}</span>${statusBadge(state)}</div>
+          <h3>${esc(a.title)}</h3>
+          <p>${esc(u ? u.title : '')} · ${esc(a.maxScore)} marks · ${esc(info.label)}</p>
+          ${sub && sub.score !== null ? `<div class="asg-score">${icon('star')} Score: <strong>${sub.score}/${a.maxScore}</strong>${sub.feedback ? `<span>${esc(sub.feedback)}</span>` : ''}</div>` : sub ? `<div class="asg-submitted">${icon('check')} Submitted ${esc(relative(sub.createdAt))} · awaiting grade</div>` : ''}
+        </div>
+        <div class="asg-actions"><button type="button" class="btn ${sub ? 'btn-ghost' : 'btn-primary'} btn-sm" data-action="assignment-open" data-id="${a.id}">${sub ? esc(I18N.t('View details')) : esc(I18N.t('Submit work'))}</button></div>
+      </article>`;
+    }).join('')}</div>` : `<div class="card">${emptyState('clipboard', 'No assignments yet', 'Assignments for your registered units will appear here.')}</div>`}`;
+  }
+
+  const assignments = DB.assignmentsForStaff(user).slice().sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+  return `${pageHead(I18N.t('Assignments'), user.role === 'admin' ? 'All coursework across the portal' : 'Manage coursework for your units', `<button type="button" class="btn btn-primary btn-sm" data-action="new-assignment">${icon('plus')} ${esc(I18N.t('New assignment'))}</button>`)}
+  ${assignments.length ? `<div class="card table-card"><div class="table-wrap"><table class="data-table">
+    <thead><tr><th>Assignment</th><th>Unit</th><th>Due</th><th>Submissions</th><th>To grade</th><th></th></tr></thead>
+    <tbody>${assignments.map(a => {
+      const subs = DB.submissionsFor(a.id); const ungraded = subs.filter(s => s.score === null).length; const info = dueInfo(a.dueAt);
+      return `<tr><td><strong>${esc(a.title)}</strong><small class="cell-sub">Max ${a.maxScore} marks</small></td><td><span class="unit-code small">${esc(a.unitCode)}</span></td><td>${esc(fmtDate(a.dueAt, true))}<small class="cell-sub ${info.overdue ? 'danger-text' : ''}">${esc(info.label)}</small></td><td>${subs.length}</td><td>${ungraded ? `<span class="badge badge-warn">${ungraded}</span>` : `<span class="badge badge-success">0</span>`}</td><td><button type="button" class="btn btn-ghost btn-xs" data-action="assignment-open" data-id="${a.id}">${icon('eye')} Open</button></td></tr>`;
+    }).join('')}</tbody>
+  </table></div></div>` : `<div class="card">${emptyState('clipboard', 'No assignments created', 'Create an assignment for one of your units.', `<button type="button" class="btn btn-primary" data-action="new-assignment">${icon('plus')} ${esc(I18N.t('New assignment'))}</button>`)}</div>`}`;
+}
+
+/* ---------------- Results & transcript ---------------- */
+
+function resultGroups(marks) {
+  const groups = {};
+  marks.forEach(m => {
+    const key = m.termCode;
+    if (!groups[key]) {
+      const u = DB.unit(m.unitCode);
+      groups[key] = { termCode: key, label: u ? u.termLabel : key, marks: [] };
+    }
+    groups[key].marks.push(m);
+  });
+  return Object.values(groups).sort((a, b) => (a.termCode < b.termCode ? 1 : -1));
+}
+
+function renderResults(user) {
+  if (user.role === 'student') {
+    const marks = DB.marksForStudent(user.id, true);
+    const gpa = DB.gpa(marks);
+    const groups = resultGroups(marks);
+    return `${pageHead(I18N.t('Results'), 'Published marks for your registered units', `<a class="btn btn-ghost btn-sm" href="#/transcript">${icon('file')} ${esc(I18N.t('Transcript'))}</a>`)}
+    <div class="result-hero">
+      <div class="gpa-ring" style="--gpa:${gpa || 0}"><span><strong>${gpa === null ? '—' : gpa.toFixed(2)}</strong><small>${esc(I18N.t('GPA'))}</small></span></div>
+      <div class="result-hero-copy"><span class="eyebrow">Academic standing</span><h2>${esc(DB.classification(gpa))}</h2><p>${marks.length} published results across ${groups.length} term${groups.length === 1 ? '' : 's'}. Only published results appear here.</p>
+      <div class="inline-actions"><a class="btn btn-ghost btn-sm" href="#/transcript">${icon('print')} ${esc(I18N.t('Print transcript'))}</a><a class="btn btn-ghost btn-sm" href="#/units">${icon('book')} Units</a></div></div>
+    </div>
+    ${groups.length ? groups.map(g => `<div class="card result-group">
+      <div class="card-head"><div><h2>${esc(g.label)}</h2><p class="card-sub">${g.marks.length} unit${g.marks.length === 1 ? '' : 's'} · ${g.termCode === DB.data.meta.termCode ? 'Current term' : 'Previous term'}</p></div><span class="chip chip-soft">${esc(g.termCode)}</span></div>
+      <div class="table-wrap"><table class="data-table results-table">
+        <thead><tr><th>Unit</th><th>Credits</th><th>CAT 1</th><th>CAT 2</th><th>Exam</th><th>Total</th><th>Grade</th><th>Points</th></tr></thead>
+        <tbody>${g.marks.map(m => { const u = DB.unit(m.unitCode); return `<tr><td><strong>${esc(m.unitCode)}</strong><small class="cell-sub">${esc(u ? u.title : '')}</small></td><td>${u ? u.credits : '—'}</td><td>${m.cat1}/30</td><td>${m.cat2}/30</td><td>${m.exam}/70</td><td><strong>${m.total}%</strong></td><td><span class="grade-pill grade-${m.grade}">${m.grade}</span></td><td>${m.points.toFixed(1)}</td></tr>`; }).join('')}</tbody>
+      </table></div>
+    </div>`).join('') : `<div class="card">${emptyState('chart', 'No published results', 'Your lecturers have not published results yet. Check back after assessments are marked.')}</div>`}
+    <p class="page-note">${icon('info')} Results are provisional until confirmed by the Registrar. If a mark looks wrong, contact your lecturer or the academic office.</p>`;
+  }
+  return renderMarks(user);
+}
+
+function renderTranscript(user) {
+  const marks = DB.marksForStudent(user.id, true);
+  const groups = resultGroups(marks);
+  const gpa = DB.gpa(marks);
+  const prog = programmeFor(user.programme);
+  return `${pageHead(I18N.t('Transcript'), 'Unofficial academic record generated from published results', `<button type="button" class="btn btn-primary btn-sm" data-action="print">${icon('print')} ${esc(I18N.t('Print transcript'))}</button>`)}
+  <div class="transcript-sheet" id="transcript-sheet">
+    <div class="transcript-head">
+      <img src="assets/logo.jpeg" alt="TSMHST logo">
+      <div class="transcript-school"><strong>Tricent School of Medical Health Science and Technology</strong><span>${esc(APP.address)} · ${esc(APP.domain)} · ${esc(APP.officeEmail)}</span><h2>ACADEMIC TRANSCRIPT</h2></div>
+      <div class="transcript-stamp">UNOFFICIAL<br>PORTAL COPY</div>
+    </div>
+    <div class="transcript-student">
+      ${detailRow('Student name', esc(user.name))}
+      ${detailRow('Admission number', esc(user.admissionNo))}
+      ${detailRow('Programme', esc(prog.name))}
+      ${detailRow('Department', esc(prog.dept))}
+      ${detailRow('Campus', esc(user.campus || '—'))}
+      ${detailRow('Academic year', esc(DB.data.meta.academicYear))}
+      ${detailRow('Examining body', esc(prog.examBody))}
+      ${detailRow('Generated', esc(fmtDate(new Date().toISOString(), true)))}
+    </div>
+    ${groups.length ? groups.map(g => `<div class="transcript-term">
+      <h3>${esc(g.label)} <span>${esc(g.termCode)}</span></h3>
+      <div class="table-wrap"><table class="transcript-table"><thead><tr><th>Code</th><th>Unit</th><th>Credits</th><th>CAT 1</th><th>CAT 2</th><th>Exam</th><th>Total</th><th>Grade</th><th>Points</th></tr></thead>
+      <tbody>${g.marks.map(m => { const u = DB.unit(m.unitCode); return `<tr><td>${esc(m.unitCode)}</td><td>${esc(u ? u.title : '')}</td><td>${u ? u.credits : ''}</td><td>${m.cat1}</td><td>${m.cat2}</td><td>${m.exam}</td><td>${m.total}</td><td><strong>${m.grade}</strong></td><td>${m.points.toFixed(1)}</td></tr>`; }).join('')}</tbody></table></div>
+    </div>`).join('') : `<div class="transcript-empty">No published results are available for this student yet.</div>`}
+    <div class="transcript-summary">
+      <div><span>Cumulative GPA</span><strong>${gpa === null ? '—' : gpa.toFixed(2)}</strong></div>
+      <div><span>Classification</span><strong>${esc(DB.classification(gpa))}</strong></div>
+      <div><span>Units completed</span><strong>${marks.length}</strong></div>
+      <div class="transcript-sign"><span>Registrar</span><strong>Signature &amp; stamp</strong></div>
+    </div>
+    <p class="transcript-foot">This document is generated from the TSMHST Portal and is not valid without the official signature and stamp of the Registrar. © ${new Date().getFullYear()} TSMHST.</p>
+  </div>`;
+}
+
+/* ---------------- Fees & hostel ---------------- */
+
+function feeAccountName(user) {
+  return 'K-' + user.name;
+}
+
+function paybillCard(title, channel, account) {
+  const till = channel.channel === 'buygoods';
+  const number = channel.paybill;
+  return `<div class="paybill-card">
+    <span class="eyebrow">${esc(title)}</span>
+    <div class="paybill-number">${esc(number)}<button type="button" class="icon-btn tiny" data-action="copy" data-copy="${esc(number)}" title="${esc(I18N.t('Copy'))}">${icon('copy')}</button></div>
+    <div class="paybill-channel">M-Pesa ${till ? 'Buy Goods (Till)' : 'Paybill'}</div>
+    <div class="paybill-account">
+      <span>${till ? 'Account' : esc(I18N.t('Account number'))}</span>
+      <strong>${till ? 'Not required for Buy Goods' : esc(account)}</strong>
+      ${till ? '' : `<button type="button" class="icon-btn tiny" data-action="copy" data-copy="${esc(account)}" title="${esc(I18N.t('Copy'))}">${icon('copy')}</button>`}
+    </div>
+    ${channel.accountHint ? `<small>${esc(channel.accountHint)}</small>` : ''}
+  </div>`;
+}
+
+function renderFees(user) {
+  if (user.role !== 'student') return renderHome(user);
+  const fees = DB.feeSummary(user.id);
+  const invoice = DB.invoiceFor(user.id);
+  const payments = DB.paymentsFor(user.id);
+  const paybills = DB.data.meta.paybills;
+  return `${pageHead(I18N.t('Fees'), `${esc(DB.data.meta.termLabel)} · ${esc(user.admissionNo)}`, `<button type="button" class="btn btn-ghost btn-sm" data-action="fee-statement">${icon('download')} Statement PDF</button><button type="button" class="btn btn-primary btn-sm" data-action="pay-fees">${icon('wallet')} ${esc(I18N.t('Pay now'))}</button>`)}
+  <div class="stats-grid">
+    ${statCard(I18N.t('Total billed'), money(fees.billed), 'Current account statement', 'file', '')}
+    ${statCard(I18N.t('Total paid'), money(fees.paid), 'Verified payments', 'checkCircle', 'green')}
+    ${statCard(I18N.t('Outstanding'), money(fees.balance), fees.pending ? `${money(fees.pending)} pending` : 'Nothing pending', 'wallet', fees.balance > 0 ? 'amber' : 'green')}
+    ${statCard(I18N.t('Paybill'), paybills.fees.paybill, paybills.fees.name, 'finance', 'maroon')}
+  </div>
+  ${fees.pending ? `<div class="alert-strip info">${icon('clock')}<span>You have ${money(fees.pending)} awaiting verification. It will reflect once finance confirms the M-Pesa reference.</span></div>` : ''}
+  <div class="dash-grid">
+    <div class="card">
+      <div class="card-head"><div><h2>${esc(I18N.t('Fee statement'))}</h2><p class="card-sub">${invoice ? esc(invoice.termLabel) : 'No invoice for this term'}</p></div>${statusBadge(fees.balance > 0 ? 'unpaid' : 'paid')}</div>
+      ${invoice ? `<div class="table-wrap"><table class="data-table fee-table"><thead><tr><th>${esc(I18N.t('Item'))}</th><th class="right">Amount</th></tr></thead>
+        <tbody>${invoice.items.map(item => `<tr><td>${esc(item.label)}</td><td class="right">${money(item.amount)}</td></tr>`).join('')}
+        <tr class="table-total"><td><strong>Total billed</strong></td><td class="right"><strong>${money(invoice.total)}</strong></td></tr>
+        <tr><td>Total paid (verified)</td><td class="right">${money(fees.paid)}</td></tr>
+        <tr class="table-total"><td><strong>Balance</strong></td><td class="right"><strong>${money(fees.balance)}</strong></td></tr></tbody></table></div>` : emptyState('wallet', 'No fee invoice', 'Your invoice will appear after registration is processed.')}
+      <p class="page-note">${icon('info')} Fee structure is set by the finance office. Payments are only confirmed after the reference is verified.</p>
+    </div>
+    <div class="card">
+      <div class="card-head"><div><h2>${esc(I18N.t('Pay now'))}</h2><p class="card-sub">M-Pesa paybill details</p></div>${icon('wallet')}</div>
+      ${paybillCard(I18N.t('Fees paybill'), paybills.fees, feeAccountName(user))}
+      <ol class="steps-list"><li>Go to M-Pesa → Lipa na M-Pesa → Pay Bill.</li><li>Enter business number <strong>${esc(paybills.fees.paybill)}</strong>.</li><li>Account number: <strong>${esc(feeAccountName(user))}</strong> (K- followed by your full name).</li><li>Enter the amount and confirm, then record the M-Pesa code here.</li></ol>
+      <button type="button" class="btn btn-primary btn-block" data-action="pay-fees">${icon('wallet')} Record a payment</button>
+      ${paybills.fees.demo ? `<p class="demo-note">${icon('alert')} Demo paybill. The finance office must replace it with the official school paybill in Admin → Finance.</p>` : ''}
+    </div>
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h2>${esc(I18N.t('Payment history'))}</h2><p class="card-sub">${payments.length} transaction${payments.length === 1 ? '' : 's'}</p></div></div>
+    ${payments.length ? `<div class="table-wrap"><table class="data-table"><thead><tr><th>Date</th><th>Reference</th><th>Method</th><th class="right">Amount</th><th>Status</th><th></th></tr></thead><tbody>${payments.map(p => `<tr><td>${esc(fmtDate(p.createdAt, true))}</td><td><code>${esc(p.reference)}</code></td><td>${esc(p.method)}</td><td class="right">${money(p.amount)}</td><td>${statusBadge(p.status)}</td><td class="right"><span class="inline-actions">${p.proofFileId ? `<button type="button" class="btn btn-ghost btn-xs" data-action="payment-proof" data-payment="${p.id}">${icon('eye')} Proof</button>` : ''}${p.status === 'verified' ? `<button type="button" class="btn btn-ghost btn-xs" data-action="payment-receipt" data-payment="${p.id}">${icon('download')} Receipt</button>` : ''}</span>${!p.proofFileId && p.status !== 'verified' ? `<span class="muted-text">—</span>` : ''}</td></tr>`).join('')}</tbody></table></div>` : emptyState('wallet', 'No payments yet', 'Your M-Pesa payments will appear here after you record them.')}
+  </div>
+  <div class="card">
+    <div class="card-head"><div><h2>Hostel accommodation</h2><p class="card-sub">Accommodation is paid separately through Buy Goods</p></div><a class="card-link" href="#/hostel">${esc(I18N.t('Book hostel'))} ${icon('chevron')}</a></div>
+    ${paybillCard(I18N.t('Hostel Buy Goods'), paybills.hostel, '')}
+  </div>`;
+}
+
+/* ---------------- Fee documents (PDF) ---------------- */
+
+function feePdfFooter() {
+  return APP.name + ' · ' + APP.officeEmail + ' · ' + APP.officePhoneDisplay + ' · ' + APP.address;
+}
+
+function feeStudentRows(student) {
+  const programme = programmeFor(student.programme);
+  return [
+    ['Student', student.name],
+    ['Admission number', student.admissionNo || '—'],
+    ['Programme', programme.name + ' (' + programme.code + ')'],
+    ['Campus', student.campus || '—'],
+    ['Term', DB.data.meta.termLabel + ' (' + DB.data.meta.termCode + ')']
+  ];
+}
+
+function buildReceiptPDF(student, payment) {
+  const fees = DB.feeSummary(student.id);
+  const verifier = payment.verifiedBy ? DB.user(payment.verifiedBy) : null;
+  const doc = pdfDocument({ footer: feePdfFooter() });
+  pdfLetterhead(doc, 'Official fee receipt', 'This receipt confirms a verified M-Pesa payment');
+  doc.text('Receipt no. ' + payment.reference, { size: 11, bold: true, color: [0.42, 0.12, 0.16], gap: 2 });
+  doc.text('Issued ' + fmtDate(payment.verifiedAt || payment.createdAt, true), { size: 8.5, color: [0.42, 0.44, 0.4] });
+  doc.space(6);
+  doc.table(
+    [{ label: 'Details', width: 0.32 }, { label: 'Student account', width: 0.68, bold: false }],
+    feeStudentRows(student).concat([
+      ['Payment method', payment.method],
+      ['M-Pesa reference', payment.reference],
+      ['Date paid', fmtDate(payment.createdAt, true)],
+      ['Verified on', payment.verifiedAt ? fmtDate(payment.verifiedAt, true) : '—'],
+      ['Received by', verifier ? verifier.name + ' (' + roleLabel(verifier.role) + ')' : 'Finance office']
+    ])
+  );
+  doc.space(4);
+  doc.text('Amount received', { size: 9, bold: true, color: [0.25, 0.55, 0.12] });
+  doc.text(money(payment.amount), { size: 24, bold: true, color: [0.25, 0.55, 0.12], gap: 6 });
+  doc.band(
+    [{ label: 'Billed', width: 0.25 }, { label: 'Verified paid', width: 0.25 }, { label: 'Pending', width: 0.25 }, { label: 'Balance', width: 0.25, align: 'right' }],
+    [money(fees.billed), money(fees.paid), money(fees.pending), money(fees.balance)]
+  );
+  doc.space(8);
+  doc.text('This is a computer-generated receipt from the TSMHST Portal. Keep it for your records. If the details above do not match your M-Pesa message, contact the Finance Office on ' + APP.officePhoneDisplay + ' or ' + APP.officeEmail + '.', { size: 8, wrap: true, color: [0.35, 0.37, 0.33] });
+  downloadBlob(doc.build(), 'TSMHST-receipt-' + payment.reference + '.pdf');
+}
+
+function buildStatementPDF(student) {
+  const fees = DB.feeSummary(student.id);
+  const invoice = DB.invoiceFor(student.id);
+  const payments = DB.paymentsFor(student.id);
+  const doc = pdfDocument({ footer: feePdfFooter() });
+  pdfLetterhead(doc, 'Fee statement', DB.data.meta.termLabel + ' · ' + DB.data.meta.termCode + ' · issued ' + fmtDate(new Date().toISOString()));
+  doc.table(
+    [{ label: 'Field', width: 0.32 }, { label: 'Student', width: 0.68, bold: false }],
+    feeStudentRows(student)
+  );
+  if (invoice) {
+    doc.text('Invoiced items', { size: 10, bold: true, color: [0.42, 0.12, 0.16] });
+    doc.table(
+      [{ label: 'Item', width: 0.8 }, { label: 'Amount (Ksh.)', width: 0.2, align: 'right' }],
+      invoice.items.map(item => [item.label, Number(item.amount).toLocaleString('en-KE')])
+    );
+  } else {
+    doc.text('No invoice has been raised for this term.', { size: 9, color: [0.45, 0.46, 0.43] });
+  }
+  doc.band(
+    [{ label: 'Billed', width: 0.25 }, { label: 'Verified paid', width: 0.25 }, { label: 'Pending', width: 0.25 }, { label: 'Outstanding', width: 0.25, align: 'right' }],
+    [money(fees.billed), money(fees.paid), money(fees.pending), money(fees.balance)],
+    { height: 28, size: 9 }
+  );
+  doc.space(6);
+  doc.text('Verified payments', { size: 10, bold: true, color: [0.42, 0.12, 0.16] });
+  const verified = payments.filter(p => p.status === 'verified');
+  if (verified.length) {
+    doc.table(
+      [
+        { label: 'Date', width: 0.2 }, { label: 'Reference', width: 0.24 }, { label: 'Method', width: 0.16 },
+        { label: 'Amount (Ksh.)', width: 0.2, align: 'right' }, { label: 'Received by', width: 0.2, bold: false }
+      ],
+      verified.slice().reverse().map(p => {
+        const by = p.verifiedBy ? DB.user(p.verifiedBy) : null;
+        return [fmtDate(p.createdAt), p.reference, p.method, Number(p.amount).toLocaleString('en-KE'), by ? by.name : 'Finance'];
+      })
+    );
+  } else {
+    doc.text('No verified payments have been recorded yet.', { size: 9, color: [0.45, 0.46, 0.43] });
+  }
+  const pending = payments.filter(p => p.status === 'pending');
+  if (pending.length) {
+    doc.space(4);
+    doc.text('Awaiting verification', { size: 10, bold: true, color: [0.6, 0.42, 0.05] });
+    doc.table(
+      [{ label: 'Date', width: 0.3 }, { label: 'Reference', width: 0.4 }, { label: 'Amount (Ksh.)', width: 0.3, align: 'right' }],
+      pending.map(p => [fmtDate(p.createdAt), p.reference, Number(p.amount).toLocaleString('en-KE')])
+    );
+  }
+  const hostel = DB.hostelBookingsFor(student.id).filter(b => b.termCode === DB.data.meta.termCode);
+  if (hostel.length) {
+    const room = HOSTELS.find(h => h.id === hostel[0].hostelId);
+    doc.space(2);
+    doc.text('Hostel accommodation: ' + (hostel[0].status === 'approved' ? 'approved' : hostel[0].status) + ' · ' + (room ? room.room + ' · ' + money(room.perTerm) + ' per term, paid separately by Buy Goods.' : ''), { size: 8.5, wrap: true, color: [0.35, 0.37, 0.33] });
+  }
+  doc.space(8);
+  doc.rule();
+  doc.text('Fee structures are set by the Finance Office. Only payments verified against an M-Pesa reference reduce the balance. Queries: ' + APP.officeEmail + ' · ' + APP.officePhoneDisplay + '.', { size: 8, wrap: true, color: [0.35, 0.37, 0.33] });
+  downloadBlob(doc.build(), 'TSMHST-fee-statement-' + String(student.admissionNo || student.id).replace(/[^A-Za-z0-9]+/g, '-') + '.pdf');
+}
+
+/* Text documents in the vault are exported as a branded PDF. */
+function downloadVaultDocument(docRecord) {
+  const doc = pdfDocument({ footer: feePdfFooter() });
+  pdfLetterhead(doc, docRecord.title, docRecord.category + ' · issued ' + fmtDate(docRecord.createdAt));
+  if (docRecord.summary) doc.text(docRecord.summary, { size: 10, color: [0.35, 0.37, 0.33], wrap: true });
+  doc.space(10);
+  String(docRecord.body || '').split(/\n{2,}/).forEach(paragraph => {
+    doc.text(paragraph.trim(), { size: 9.5, wrap: true });
+    doc.space(6);
+  });
+  const author = docRecord.createdBy ? DB.user(docRecord.createdBy) : null;
+  doc.space(6);
+  doc.rule();
+  doc.text('Published by ' + (author ? author.name + ' — ' + roleLabel(author.role) : 'TSMHST administration') + '.', { size: 8, color: [0.42, 0.44, 0.4] });
+  downloadBlob(doc.build(), 'TSMHST-' + docRecord.title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '') + '.pdf');
+}
+
+function renderHostel(user) {
+  if (user.role !== 'student') return renderHome(user);
+  const bookings = DB.hostelBookingsFor(user.id);
+  const current = bookings.find(b => b.termCode === DB.data.meta.termCode);
+  const paybills = DB.data.meta.paybills;
+  return `${pageHead(I18N.t('Hostel'), `Accommodation options for ${esc(DB.data.meta.termLabel)}`, `<button type="button" class="btn btn-ghost btn-sm" data-action="pay-fees">${icon('wallet')} ${esc(I18N.t('Pay now'))}</button>`)}
+  ${current ? `<div class="alert-strip ${current.status === 'approved' ? 'success' : 'info'}">${icon(current.status === 'approved' ? 'checkCircle' : 'clock')}<span>Your hostel booking is <strong>${esc(current.status)}</strong> for ${esc((HOSTELS.find(h => h.id === current.hostelId) || {}).room || '')}. ${current.status === 'approved' ? 'Pay the hostel fee using the details below.' : 'The accommodation office will review your request.'}</span><a href="#/fees">Fees</a></div>` : ''}
+  <div class="unit-grid wide">
+    ${HOSTELS.map(h => `<article class="unit-card hostel-card">
+      <div class="hostel-visual">${icon('bed')}</div>
+      <div class="unit-top"><span class="unit-code">${esc(h.id)}</span><span class="badge badge-info">${esc(h.room)}</span></div>
+      <h3>${esc(h.name)}</h3>
+      <p class="muted-text">${esc(h.description)}</p>
+      <div class="hostel-price"><strong>${money(h.perTerm)}</strong> <small>${esc(I18N.t('Per term'))}</small></div>
+      <button type="button" class="btn btn-primary btn-sm btn-block" data-action="hostel-book" data-hostel="${h.id}" ${current ? 'disabled' : ''}>${current ? esc(I18N.t('Submitted')) : esc(I18N.t('Request booking'))}</button>
+    </article>`).join('')}
+  </div>
+  <div class="dash-grid">
+    <div class="card"><div class="card-head"><div><h2>${esc(I18N.t('Hostel Buy Goods'))}</h2><p class="card-sub">Accommodation payments</p></div>${icon('bed')}</div>
+      ${paybillCard(I18N.t('Hostel Buy Goods'), paybills.hostel, '')}
+      <ol class="steps-list"><li>Go to M-Pesa → Lipa na M-Pesa → Buy Goods and Services.</li><li>Enter till number <strong>${esc(paybills.hostel.paybill)}</strong>.</li><li>Enter the amount and confirm. No account number is required.</li><li>Record the M-Pesa code on the Fees page for verification.</li></ol>
+      <p class="demo-note">${icon('info')} Booking requests are reviewed by the accommodation office. Approval does not confirm payment; use the hostel Buy Goods till.</p>
+    </div>
+    <div class="card"><div class="card-head"><div><h2>My bookings</h2><p class="card-sub">Requests this academic year</p></div></div>
+      ${bookings.length ? `<div class="task-list">${bookings.map(b => { const h = HOSTELS.find(x => x.id === b.hostelId); return `<div class="task-row"><span class="task-icon">${icon('bed')}</span><span class="task-copy"><strong>${esc(h ? h.name : 'Hostel')}</strong><small>${esc(h ? h.room : '')} · ${esc(b.termCode)} · ${esc(relative(b.createdAt))}</small></span>${statusBadge(b.status)}</div>`; }).join('')}</div>` : emptyState('bed', 'No hostel bookings', 'Choose a room above to request accommodation.')}
+    </div>
+  </div>`;
+}
+
+/* ---------------- Document vault ---------------- */
+
+function documentSizeLabel(doc) {
+  if (!doc.size) return (doc.fileId || doc.dataUrl) ? 'File' : 'Text';
+  if (doc.size < 1024) return doc.size + ' B';
+  if (doc.size < 1024 * 1024) return Math.round(doc.size / 1024) + ' KB';
+  return (doc.size / 1024 / 1024).toFixed(1) + ' MB';
+}
+
+function renderDocuments(user) {
+  const canManage = isStaffRole(user.role);
+  const docs = DB.documentsFor(user);
+  const categories = ['All'].concat(DB.documentCategories());
+  const selected = categories.indexOf(PORTAL_STATE.documents.category) === -1 ? 'All' : PORTAL_STATE.documents.category;
+  const list = selected === 'All' ? docs : docs.filter(d => d.category === selected);
+  return `${pageHead('Document vault', 'Official policies, guidelines and files — available even without a network connection',
+    (isAdminRole(user.role) ? `<button type="button" class="btn btn-ghost btn-sm" data-action="open-cloud-sync">${icon(Sync.configured() ? 'checkCircle' : 'refresh')} Cloud sync</button>` : '') +
+    (canManage ? `<button type="button" class="btn btn-primary btn-sm" data-action="document-upload">${icon('plus')} Add document</button>` : ''))}
+  <div class="toolbar">
+    <label class="inline-select"><span>Category</span><select class="control" id="doc-category" aria-label="Filter by category">${categories.map(c => `<option value="${esc(c)}" ${c === selected ? 'selected' : ''}>${esc(c)}</option>`).join('')}</select></label>
+    <span class="chip chip-soft">${list.length} document${list.length === 1 ? '' : 's'}</span>
+  </div>
+  ${list.length ? `<div class="doc-grid">${list.map(d => {
+    const author = d.createdBy ? DB.user(d.createdBy) : null;
+    return `<article class="doc-card">
+      <div class="doc-top"><span class="doc-icon">${icon(d.fileId || d.dataUrl ? 'file' : 'bookOpen')}</span><span class="badge badge-info">${esc(d.category)}</span></div>
+      <h3>${esc(d.title)}</h3>
+      <p class="muted-text">${esc(d.summary || 'No summary provided.')}</p>
+      <div class="doc-meta"><span>${icon('calendar')} ${esc(fmtDate(d.createdAt))}</span><span>${icon('users')} ${esc(audienceLabel(d.audience))}</span><span>${esc(documentSizeLabel(d))}</span></div>
+      <div class="doc-actions">
+        <button type="button" class="btn btn-ghost btn-sm" data-action="document-open" data-document="${d.id}">${icon('eye')} Open</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="document-download" data-document="${d.id}">${icon('download')} ${d.fileId || d.dataUrl ? 'Download' : 'PDF'}</button>
+        ${canManage ? `<button type="button" class="btn btn-danger-ghost btn-sm" data-action="document-delete" data-document="${d.id}" aria-label="Delete ${esc(d.title)}">${icon('trash')}</button>` : ''}
+      </div>
+      ${author ? `<small class="doc-author">Added by ${esc(author.name)}</small>` : ''}
+    </article>`;
+  }).join('')}</div>` : `<div class="card">${emptyState('file', 'No documents here', canManage ? 'Add a policy, guideline or notice so students and staff can read it offline.' : 'Documents shared by the administration will appear here.', canManage ? `<button type="button" class="btn btn-primary" data-action="document-upload">${icon('plus')} Add document</button>` : '')}</div>`}
+  <p class="page-note">${icon('shield')} Documents and attachments are stored in the browser's IndexedDB on this device (up to 20 MB per file) so they stay available offline without filling the app's other storage.</p>`;
+}
+
+/* ---------------- Attendance ---------------- */
+
+function renderAttendance(user) {
+  if (user.role === 'student') return renderStudentAttendance(user);
+  return renderStaffAttendance(user);
+}
+
+function renderStudentAttendance(user) {
+  const sessions = DB.openSessionsForStudent(user.id);
+  const summary = DB.attendanceSummary(user.id);
+  const overall = DB.overallAttendance(user.id);
+  const regs = DB.registrationsFor(user.id, DB.data.meta.termCode);
+  const unitCodes = regs.map(r => r.unitCode);
+  const allSessions = DB.data.sessions.filter(s => unitCodes.includes(s.unitCode)).sort((a, b) => new Date(b.openedAt) - new Date(a.openedAt)).slice(0, 18);
+  return `${pageHead(I18N.t('Attendance'), 'Class sign-in and your attendance record', `<a class="btn btn-ghost btn-sm" href="#/units">${icon('book')} ${esc(I18N.t('My units'))}</a>`)}
+  <div class="signin-banner ${sessions.length ? 'live' : ''}">
+    <div class="signin-icon">${icon('check')}</div>
+    <div class="signin-copy"><span class="eyebrow">${sessions.length ? 'Session live' : 'Class sign-in'}</span><h2>${sessions.length ? sessions.length + ' open session' + (sessions.length === 1 ? '' : 's') : 'No open sessions right now'}</h2><p>${sessions.length ? 'Enter the code displayed by your lecturer to sign in.' : 'When your lecturer opens a session, enter the 6-digit code here.'}</p>
+      ${sessions.length ? `<div class="open-session-list">${sessions.map(s => `<span class="open-session">${esc(s.unitCode)} · closes ${esc(new Date(s.closesAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))}</span>`).join('')}</div>` : ''}
+    </div>
+    <form class="signin-form" data-form="signin-code"><input name="code" inputmode="numeric" maxlength="6" pattern="[0-9]{6}" placeholder="6-digit code" aria-label="Attendance code" value="${esc(PORTAL_STATE.attendance.code || '')}" required><button type="submit" class="btn btn-primary" ${sessions.length ? '' : 'disabled'}>${esc(I18N.t('Sign in'))}</button></form>
+    ${PORTAL_STATE.attendance.code ? `<p class="qr-hint">${icon('check')} Code <strong>${esc(PORTAL_STATE.attendance.code)}</strong> was read from the class QR. Tap Sign in to confirm.</p>` : ''}
+  </div>
+  <div class="stats-grid three">
+    ${statCard(I18N.t('Attendance percentage'), overall.percent + '%', 'across your registered units', 'check', overall.percent >= 75 ? 'green' : 'amber')}
+    ${statCard(I18N.t('Sessions attended'), String(overall.attended), `${overall.held} sessions held`, 'checkCircle', '')}
+    ${statCard('Eligibility', overall.percent >= 75 ? 'On track' : 'At risk', '75% minimum recommended', 'alert', overall.percent >= 75 ? 'green' : 'amber')}
+  </div>
+  <div class="dash-grid">
+    <div class="card"><div class="card-head"><div><h2>${esc(I18N.t('My attendance'))}</h2><p class="card-sub">By registered unit</p></div></div>
+      ${summary.length ? `<div class="attendance-list">${summary.map(s => `<div class="attendance-row"><div class="attendance-head"><strong>${esc(s.unitCode)} · ${esc(s.unit ? s.unit.title : '')}</strong><span>${s.attended}/${s.held} · <strong>${s.percent}%</strong></span></div>${progress(s.percent, s.percent < 75 ? 'warn' : '')}</div>`).join('')}</div>` : emptyState('check', 'No units registered', 'Register units to track attendance.')}
+    </div>
+    <div class="card"><div class="card-head"><div><h2>Recent sessions</h2><p class="card-sub">Your sign-in history</p></div></div>
+      ${allSessions.length ? `<div class="task-list">${allSessions.map(s => { const present = DB.attendanceForSession(s.id).some(a => a.studentId === user.id); return `<div class="task-row"><span class="task-icon">${icon('calendar')}</span><span class="task-copy"><strong>${esc(s.unitCode)} · ${esc(fmtDate(s.openedAt))}</strong><small>${esc(new Date(s.openedAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))} · ${s.status === 'open' ? 'Open now' : 'Closed'}</small></span>${statusBadge(present ? 'present' : 'absent')}</div>`; }).join('')}</div>` : emptyState('calendar', 'No sessions yet', 'Your attendance history will appear here.')}
+    </div>
+  </div>`;
+}
+
+function attendanceUnitsFor(user) {
+  return user.role === 'admin' ? DB.data.units.filter(u => u.current) : DB.unitsForLecturer(user.id);
+}
+
+function attendanceDeepLink(code) {
+  return location.origin + location.pathname + '#/attendance?code=' + encodeURIComponent(code);
+}
+
+function sessionQrHTML(session) {
+  const svg = qrSvg(attendanceDeepLink(session.code), 3);
+  if (!svg) return '';
+  return `<div class="session-qr">${svg}<div class="session-qr-copy"><strong>Scan to sign in</strong><small>or enter code ${esc(session.code)}</small><button type="button" class="btn btn-ghost btn-xs" data-action="session-qr" data-session="${session.id}">${icon('eye')} Show large</button></div></div>`;
+}
+
+function renderStaffAttendance(user) {
+  const units = attendanceUnitsFor(user);
+  let selected = units.find(u => u.code === PORTAL_STATE.attendance.unitCode);
+  if (!selected && units.length) { selected = units[0]; PORTAL_STATE.attendance.unitCode = selected.code; }
+  const sessions = selected ? DB.sessionsForUnit(selected.code) : [];
+  const open = sessions.filter(s => s.status === 'open');
+  const students = selected ? DB.studentsForUnit(selected.code) : [];
+  return `${pageHead(I18N.t('Attendance'), 'Open a sign-in session and monitor class attendance',
+    `<select class="control" id="att-unit" aria-label="Select unit">${units.map(u => `<option value="${u.code}" ${selected && selected.code === u.code ? 'selected' : ''}>${esc(u.code)} · ${esc(u.title)}</option>`).join('')}</select>`)}
+  ${!selected ? `<div class="card">${emptyState('check', 'No units assigned', 'You need a unit allocation before you can take attendance.')}</div>` : `
+  <div class="dash-grid">
+    <div class="card session-open-card">
+      <div class="card-head"><div><h2>${esc(I18N.t('Open session'))}</h2><p class="card-sub">${esc(selected.title)} · ${students.length} students</p></div><span class="badge ${open.length ? 'badge-success' : 'badge-neutral'}">${open.length ? open.length + ' live' : 'None live'}</span></div>
+      ${user.role === 'lecturer' ? `<form data-form="start-session" data-unit="${selected.code}" class="session-form">
+        <label class="field"><span>${esc(I18N.t('Duration'))}</span><select name="minutes"><option value="15">15 minutes</option><option value="30" selected>30 minutes</option><option value="60">60 minutes</option></select></label>
+        <button type="submit" class="btn btn-primary">${icon('plus')} ${esc(I18N.t('Open session'))}</button>
+      </form><p class="page-note">A unique 6-digit code is generated for each session. Students sign in from their portal.</p>`
+      : `<p class="muted-text">Administrators can monitor and close live sessions. Lecturers open sessions from their own accounts.</p>`}
+      ${open.length ? open.map(s => {
+        const records = DB.attendanceForSession(s.id);
+        return `<div class="live-session">
+          <div class="live-code"><span>${esc(I18N.t('Session code'))}</span><strong>${esc(s.code)}</strong><small>Closes ${esc(new Date(s.closesAt).toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }))}</small></div>
+          <div class="live-stats"><div><strong>${records.length}</strong><span>signed in</span></div><div><strong>${Math.max(0, students.length - records.length)}</strong><span>not yet</span></div></div>
+          <button type="button" class="btn btn-danger-ghost btn-sm" data-action="session-close" data-session="${s.id}">${esc(I18N.t('End session'))}</button>
+        </div>
+        ${sessionQrHTML(s)}
+        <details class="roster-details"><summary>${esc(I18N.t('Roster'))} (${records.length}/${students.length})</summary>
+          <div class="roster-grid">${students.map(st => { const at = records.find(r => r.studentId === st.id); return `<span class="roster-person ${at ? 'in' : ''}">${avatar(st, 'xs')} ${esc(st.name)} ${at ? icon('check') : ''}</span>`; }).join('')}</div>
+        </details>`;
+      }).join('') : ''}
+    </div>
+    <div class="card">
+      <div class="card-head"><div><h2>Session history</h2><p class="card-sub">${esc(selected.code)} · ${sessions.length} sessions</p></div></div>
+      ${sessions.length ? `<div class="task-list scroll-list">${sessions.map(s => { const records = DB.attendanceForSession(s.id); return `<div class="task-row"><span class="task-icon">${icon('calendar')}</span><span class="task-copy"><strong>${esc(fmtDate(s.openedAt, true))}</strong><small>Code ${esc(s.code)} · ${records.length}/${students.length} signed in</small></span>${s.status === 'open' ? `<button type="button" class="btn btn-danger-ghost btn-xs" data-action="session-close" data-session="${s.id}">${esc(I18N.t('End session'))}</button>` : statusBadge('closed')}</div>`; }).join('')}</div>` : emptyState('calendar', 'No sessions yet', 'Open a session during class to start collecting attendance.')}
+    </div>
+  </div>
+  <div class="card"><div class="card-head"><div><h2>Class attendance summary</h2><p class="card-sub">${esc(selected.code)} · counts across all sessions</p></div></div>
+    <div class="table-wrap"><table class="data-table"><thead><tr><th>Student</th><th>Admission no.</th><th>Sessions attended</th><th>Attendance</th></tr></thead><tbody>
+      ${students.map(st => { const all = sessions.map(s => s.id); const count = DB.data.attendance.filter(a => a.studentId === st.id && all.includes(a.sessionId)).length; const pct = sessions.length ? Math.round(count / sessions.length * 100) : 0; return `<tr><td><span class="person-cell">${avatar(st, 'xs')} ${esc(st.name)}</span></td><td>${esc(st.admissionNo)}</td><td>${count}/${sessions.length}</td><td><div class="inline-progress">${progress(pct, pct < 75 ? 'warn' : '')}<span>${pct}%</span></div></td></tr>`; }).join('')}
+    </tbody></table></div>
+  </div>`}`;
+}
+
+/* ---------------- Timetable & examinations ---------------- */
+
+const TT_DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri'];
+const TT_DAY_LABELS = { Mon: 'Monday', Tue: 'Tuesday', Wed: 'Wednesday', Thu: 'Thursday', Fri: 'Friday' };
+
+function ttMinutes(time) {
+  const [h, m] = String(time || '0:0').split(':').map(Number);
+  return (h || 0) * 60 + (m || 0);
+}
+
+function programmeHue(code) {
+  const index = PORTAL_PROGRAMMES.findIndex(p => p.code === code);
+  return ((index < 0 ? 0 : index) * 53 + 12) % 360;
+}
+
+function timetableScope(user) {
+  const current = DB.data.units.filter(u => u.current);
+  if (user.role === 'student') {
+    const codes = new Set(DB.registrationsFor(user.id, DB.data.meta.termCode).map(r => r.unitCode));
+    return current.filter(u => codes.has(u.code));
+  }
+  if (user.role === 'lecturer') return current.filter(u => u.lecturer === user.id);
+  if ((user.role === 'principal' || user.role === 'campus_admin') && user.campus) {
+    const ids = new Set(DB.data.users.filter(u => u.role === 'student' && u.campus === user.campus).map(u => u.id));
+    const codes = new Set(DB.data.registrations.filter(r => ids.has(r.studentId)).map(r => r.unitCode));
+    return current.filter(u => codes.has(u.code));
+  }
+  return current;
+}
+
+function timetableData(user) {
+  const programme = user.role === 'student' ? 'all' : PORTAL_STATE.timetable.programme;
+  const units = timetableScope(user).filter(u => programme === 'all' || u.programme === programme);
+  const codes = new Set(units.map(u => u.code));
+  const exams = EXAM_CALENDAR
+    .filter(e => codes.has(e.unitCode))
+    .sort((a, b) => (a.date + a.start).localeCompare(b.date + b.start));
+  return { units, exams, programme };
+}
+
+function examDayLabel(date) {
+  return new Date(date + 'T00:00:00').toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'short' });
+}
+
+function examCountdown(exam) {
+  if (new Date(`${exam.date}T${exam.end}:00`).getTime() <= Date.now()) return 'Completed';
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.round((new Date(exam.date + 'T00:00:00').getTime() - today.getTime()) / DAY);
+  if (days <= 0) return 'Today';
+  if (days === 1) return 'Tomorrow';
+  return `In ${days} days`;
+}
+
+function classCardHTML(u) {
+  const lecturer = DB.user(u.lecturer);
+  const [start, end] = String(u.time || '').split(' - ');
+  return `<article class="tt-class" style="--tt-accent:hsl(${programmeHue(u.programme)} 52% 42%)">
+    <span class="tt-time">${icon('clock')} ${esc(start || '')} – ${esc(end || '')}</span>
+    <strong class="tt-code">${esc(u.code)}</strong>
+    <span class="tt-title">${esc(u.title)}</span>
+    <div class="tt-meta">
+      <span>${icon('pin')} ${esc(u.room)}</span>
+      <span>${icon('user')} ${esc(lecturer ? lecturer.name : 'Lecturer')}</span>
+    </div>
+    <span class="tt-programme">${esc(u.programme)} · ${esc(u.type)}</span>
+  </article>`;
+}
+
+function weeklyGridHTML(units) {
+  return `<div class="tt-grid">${TT_DAYS.map(day => {
+    const classes = units.filter(u => u.day === day).sort((a, b) => ttMinutes(a.time) - ttMinutes(b.time));
+    return `<section class="tt-col">
+      <header class="tt-col-head"><strong>${esc(TT_DAY_LABELS[day])}</strong><span>${classes.length} class${classes.length === 1 ? '' : 'es'}</span></header>
+      <div class="tt-col-body">${classes.length ? classes.map(classCardHTML).join('') : `<p class="tt-empty">No classes</p>`}</div>
+    </section>`;
+  }).join('')}</div>`;
+}
+
+function examCalendarHTML(exams, user) {
+  const groups = {};
+  exams.forEach(e => { (groups[e.date] = groups[e.date] || []).push(e); });
+  return Object.keys(groups).sort().map(date => {
+    const list = groups[date].slice().sort((a, b) => ttMinutes(a.start) - ttMinutes(b.start));
+    return `<section class="exam-day">
+      <header class="exam-day-head">
+        <div><strong>${esc(examDayLabel(date))}</strong><span>${list.length} paper${list.length === 1 ? '' : 's'}</span></div>
+        <span class="chip chip-soft">${icon('calendar')} ${esc(examCountdown(list[0]))}</span>
+      </header>
+      <div class="exam-list">${list.map(e => {
+        const unit = DB.unit(e.unitCode) || {};
+        const programme = programmeFor(e.programme);
+        return `<article class="exam-row" style="--tt-accent:hsl(${programmeHue(e.programme)} 52% 42%)">
+          <div class="exam-time"><strong>${esc(e.start)}</strong><span>${esc(e.end)}</span></div>
+          <div class="exam-main"><strong>${esc(e.unitCode)} · ${esc(unit.title || '')}</strong><span>${esc(programme ? programme.short : e.programme)} · ${esc(e.venue)}</span></div>
+          <div class="exam-side"><span class="chip chip-soft">${esc(e.type)}</span>${user.role === 'student' ? '' : `<span class="exam-prog">${esc(e.programme)}</span>`}</div>
+        </article>`;
+      }).join('')}</div>
+    </section>`;
+  }).join('');
+}
+
+function examClashReport(exams) {
+  const sessions = {};
+  exams.forEach(e => {
+    const key = `${e.date} ${e.start}`;
+    (sessions[key] = sessions[key] || []).push(e);
+  });
+  const clashes = [];
+  Object.keys(sessions).sort().forEach(key => {
+    const rooms = {};
+    const programmes = {};
+    sessions[key].forEach(e => {
+      if (rooms[e.venue]) clashes.push(`${e.unitCode} and ${rooms[e.venue].unitCode} are both booked in ${e.venue} on ${examDayLabel(e.date)} at ${e.start}.`);
+      rooms[e.venue] = e;
+      if (programmes[e.programme]) clashes.push(`${e.unitCode} and ${programmes[e.programme].unitCode} are both ${e.programme} papers on ${examDayLabel(e.date)} at ${e.start}.`);
+      programmes[e.programme] = e;
+    });
+  });
+  return clashes;
+}
+
+function clashPanelHTML(exams) {
+  const clashes = examClashReport(exams);
+  return `<div class="card clash-card">
+    <div class="card-head"><div><h2>Examination clash check</h2><p class="card-sub">Venue and programme conflicts across ${exams.length} paper${exams.length === 1 ? '' : 's'}</p></div><span class="badge ${clashes.length ? 'badge-danger' : 'badge-success'}">${clashes.length ? clashes.length + ' issue' + (clashes.length === 1 ? '' : 's') : 'No clashes'}</span></div>
+    ${clashes.length
+      ? `<ul class="clash-list">${clashes.map(c => `<li>${icon('alert')} <span>${esc(c)}</span></li>`).join('')}</ul>`
+      : `<div class="inline-success">${icon('checkCircle')} Each programme sits one paper per session and every venue is used once per session.</div>`}
+  </div>`;
+}
+
+function timetableDocumentCard(user) {
+  const canPublish = canPublishTimetable(user);
+  const rows = Object.keys(TIMETABLE_DOC_SLOTS).map(slot => {
+    const meta = TIMETABLE_DOC_SLOTS[slot];
+    const doc = DB.timetableDocument(slot, user);
+    const detail = doc
+      ? `${doc.title} · ${fmtDate(doc.createdAt)} · ${documentSizeLabel(doc)}`
+      : canPublish ? 'Nothing published yet — upload the file for this term' : 'Not published for this term yet';
+    return `<div class="task-row doc-slot-row">
+      <span class="task-icon">${icon(slot === 'exam' ? 'file' : 'calendar')}</span>
+      <span class="task-copy"><strong>${esc(meta.label)}</strong><small>${esc(detail)}</small></span>
+      <span class="doc-slot-actions">
+        ${doc ? `<button type="button" class="btn btn-ghost btn-sm" data-action="document-open" data-document="${doc.id}">${icon('eye')} Open</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="document-download" data-document="${doc.id}">${icon('download')} Download</button>` : ''}
+        ${canPublish ? `<button type="button" class="btn ${doc ? 'btn-ghost' : 'btn-primary'} btn-sm" data-action="timetable-upload" data-slot="${slot}">${icon('plus')} ${doc ? 'Replace' : 'Upload'}</button>` : ''}
+      </span>
+    </div>`;
+  }).join('');
+  return `<div class="card doc-slot-card">
+    <div class="card-head"><div><h2>${canPublish ? 'Timetable documents' : 'Published timetables'}</h2><p class="card-sub">${canPublish ? 'Add the class and examination timetable as files — students and staff open them offline' : 'Open or download the class and examination timetable for this term'}</p></div>${icon('file')}</div>
+    <div class="task-list">${rows}</div>
+    ${canPublish ? `<p class="page-note">${icon('info')} Files go to the document vault under “Timetable”. A new upload replaces the one shown here; earlier versions stay in the vault.</p>` : ''}
+  </div>`;
+}
+
+function renderTimetable(user) {
+  const tab = PORTAL_STATE.timetable.tab === 'exams' ? 'exams' : 'classes';
+  const { units, exams } = timetableData(user);
+  const classes = units.filter(u => TT_DAYS.includes(u.day));
+  const next = exams.find(e => new Date(`${e.date}T${e.start}:00`).getTime() > Date.now());
+  const canFilter = user.role !== 'student';
+  const canOversee = isExecRole(user.role) || ['principal', 'registrar', 'exam_officer'].includes(user.role);
+  const programmeCodes = Array.from(new Set(timetableScope(user).map(u => u.programme))).sort();
+  const scopeCodes = new Set(timetableScope(user).map(u => u.code));
+  const scopeExams = EXAM_CALENDAR.filter(e => scopeCodes.has(e.unitCode));
+  const programmeFilter = canFilter && programmeCodes.length > 1
+    ? `<select class="control" id="timetable-programme" aria-label="Filter by programme"><option value="all" ${PORTAL_STATE.timetable.programme === 'all' ? 'selected' : ''}>All programmes</option>${programmeCodes.map(code => { const p = programmeFor(code); return `<option value="${esc(code)}" ${PORTAL_STATE.timetable.programme === code ? 'selected' : ''}>${esc(code)} · ${esc(p.short)}</option>`; }).join('')}</select>`
+    : '';
+  const actions = `${programmeFilter}<button type="button" class="btn btn-ghost btn-sm" data-action="download-ics" ${exams.length ? '' : 'disabled'}>${icon('download')} Add exams to calendar</button>`;
+  const subtitle = user.role === 'student'
+    ? `${esc(DB.data.meta.termLabel)} · ${esc(programmeFor(user.programme).name)} · Semester ${esc(user.semester || 1)}`
+    : user.role === 'lecturer'
+      ? 'Your weekly teaching schedule and exam-room duty'
+      : 'Weekly classes and the end-of-term examination calendar';
+  return `${pageHead(I18N.t('Timetable & exams'), subtitle, actions)}
+  <div class="stats-grid three">
+    ${statCard('Weekly classes', String(classes.length), `${units.length} unit${units.length === 1 ? '' : 's'} in view`, 'calendar', 'green')}
+    ${statCard('Exam papers', String(exams.length), EXAM_WINDOW.label, 'file', 'maroon')}
+    ${statCard('Next paper', next ? fmtShort(next.date) : '—', next ? `${next.unitCode} · ${next.start} · ${next.venue}` : 'No papers scheduled', 'clock', next ? 'amber' : '')}
+  </div>
+  ${timetableDocumentCard(user)}
+  <div class="tt-toolbar">
+    <div class="segmented tt-tabs">
+      <button type="button" class="segment ${tab === 'classes' ? 'active' : ''}" data-action="timetable-tab" data-tab="classes">${icon('calendar')} Weekly classes</button>
+      <button type="button" class="segment ${tab === 'exams' ? 'active' : ''}" data-action="timetable-tab" data-tab="exams">${icon('file')} Exam calendar</button>
+    </div>
+    <span class="chip chip-soft">${icon('info')} ${esc(DB.data.meta.termLabel)}</span>
+  </div>
+  ${!units.length
+    ? `<div class="card">${emptyState('calendar', 'Nothing scheduled yet', user.role === 'student' ? 'Register units for the current term to see your classes and exam papers.' : 'Units in this view will appear once the academic office publishes the term allocation.', user.role === 'student' ? `<a class="btn btn-primary" href="#/units">${icon('book')} ${esc(I18N.t('My units'))}</a>` : '')}</div>`
+    : tab === 'classes'
+      ? `<div class="card tt-card">${weeklyGridHTML(classes)}</div>
+        <p class="page-note">${icon('info')} Classes run Monday to Friday. Lecture rooms and times are published by the academic registry; report any change to your campus administration.</p>`
+      : `${exams.length
+        ? `<div class="card exam-card">
+            <div class="card-head"><div><h2>Examination calendar</h2><p class="card-sub">${esc(EXAM_WINDOW.label)} · two-hour papers · arrive 15 minutes early with your student ID</p></div><span class="chip chip-soft">${exams.length} papers</span></div>
+            ${examCalendarHTML(exams, user)}
+          </div>`
+        : `<div class="card">${emptyState('file', 'No examinations scheduled', 'Exam papers appear here once the examinations office publishes the timetable for these units.')}</div>`}
+        ${canOversee && scopeExams.length ? clashPanelHTML(scopeExams) : ''}
+        <p class="page-note">${icon('download')} Use “Add exams to calendar” to download a .ics file with a reminder 12 hours before each paper. It opens in Outlook, Google Calendar or the calendar app on your phone.</p>`}`;
+}
+
+/* ---------------- Team & notifications ---------------- */
+
+function renderTeam(user) {
+  const team = DB.team();
+  const groups = [
+    { role: 'admin', title: 'Administrators', list: team.filter(m => m.role === 'admin') },
+    { role: 'council', title: 'Student Council', list: team.filter(m => m.role === 'council') },
+    { role: 'lecturer', title: 'Lecturers', list: team.filter(m => m.role === 'lecturer') }
+  ];
+  return `${pageHead(I18N.t('Team & presence'), 'Live visibility of administrators, student council and lecturers', `<button type="button" class="btn btn-ghost btn-sm" data-action="refresh-team">${icon('refresh')} ${esc(I18N.t('Refresh'))}</button>`)}
+  <div class="alert-strip info">${icon('users')}<span>${esc(I18N.t('Presence shows who is signed in right now.'))} A green dot means the person is currently using the portal in a browser tab.</span></div>
+  ${groups.map(g => `<div class="card team-section">
+    <div class="card-head"><div><h2>${esc(g.title)}</h2><p class="card-sub">${g.list.filter(m => m.presence.online).length} online · ${g.list.length} members</p></div><span class="chip chip-soft">${esc(g.role === 'council' ? 'Student leaders' : g.role === 'admin' ? 'Portal administration' : 'Teaching staff')}</span></div>
+    <div class="team-grid">${g.list.map(m => `<div class="team-card ${m.id === user.id ? 'is-you' : ''}">
+      <div class="team-avatar">${avatar(m)}<span class="presence-dot ${m.presence.online ? 'on' : ''}"></span></div>
+      <div class="team-copy"><strong>${esc(m.name)}${m.id === user.id ? ' <span class="you-tag">You</span>' : ''}</strong><span>${esc(m.title || roleLabel(m.role))}</span>
+        <small>${m.presence.online ? `<span class="online-text">Online now</span>` : `Last seen ${esc(m.presence.lastSeen ? relative(m.presence.lastSeen) : 'never')}`}</small></div>
+      <div class="team-contact"><a href="mailto:${esc(m.email)}" title="${esc(m.email)}">${icon('mail')}</a>${m.phone ? `<a href="tel:${esc(m.phone)}" title="${esc(m.phone)}">${icon('phone')}</a>` : ''}</div>
+    </div>`).join('')}</div>
+  </div>`).join('')}
+  <p class="page-note">${icon('shield')} Presence is visible to signed-in portal users. Contact details are provided for official academic and support matters only.</p>`;
+}
+
+function renderNotifications(user) {
+  const notices = DB.noticesFor(user);
+  return `${pageHead(I18N.t('Notifications'), 'Announcements and personal updates', `<button type="button" class="btn btn-ghost btn-sm" data-action="mark-read">${icon('check')} ${esc(I18N.t('Mark all read'))}</button>`)}
+  ${notices.length ? `<div class="notification-list">${notices.map(n => `<article class="notification-card ${n.type === 'announcement' ? 'announcement' : ''}">
+    <div class="notification-icon">${icon(n.type === 'announcement' ? 'megaphone' : 'bell')}</div>
+    <div class="notification-copy"><div class="notification-top"><strong>${esc(n.title)}</strong>${n.pinned ? `<span class="pin-badge">${icon('pin')} ${esc(I18N.t('Pinned'))}</span>` : ''}</div><p>${esc(n.message)}</p><span class="notification-meta">${esc(fmtDate(n.createdAt, true))} · ${esc(n.type === 'announcement' ? 'Announcement' : 'Portal update')}${n.audience ? ' · ' + esc(n.audience === 'all' ? 'Everyone' : n.audience === 'students' ? 'Students' : n.audience === 'admins' ? 'Administrators' : 'Staff') : ''}</span></div>
+  </article>`).join('')}</div>` : `<div class="card">${emptyState('bell', I18N.t('No notifications'), 'Announcements and personal updates will appear here.')}</div>`}`;
+}
